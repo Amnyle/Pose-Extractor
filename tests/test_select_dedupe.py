@@ -128,11 +128,11 @@ def test_front_lat_spread_head_tilt_does_not_override_a_clearly_wider_spread():
     assert idx in (4, 5, 6)
 
 
-def test_lat_spread_ignores_the_hands_sliding_on_the_waist():
+def test_front_lat_spread_ignores_the_hands_sliding_on_the_waist():
     elbows = [0.70, 0.70, 0.78, 0.78, 0.70, 0.70, 0.70]
     raises = [0.30, 0.30, 0.30, 0.30, 0.90, 0.90, 0.30]   # hands slide up, elbows do not open
-    samples = [_lat(i, e, raise_=raises[i], label=BACK_LAT_SPREAD) for i, e in enumerate(elbows)]
-    assert pick_best_frame(samples, Hold(0, 6, BACK_LAT_SPREAD))[0] in (2, 3)
+    samples = [_lat(i, e, raise_=raises[i]) for i, e in enumerate(elbows)]
+    assert pick_best_frame(samples, Hold(0, 6, FRONT_LAT_SPREAD))[0] in (2, 3)
 
 
 def test_a_moving_frame_is_not_chosen_when_the_pose_is_otherwise_equal():
@@ -165,3 +165,20 @@ def test_abs_take_with_the_real_vacuum_beats_a_sharper_take_without_one():
     i1, score1 = pick_best_frame(samples, take1, ref_sharp=100, pool=pool)
     i2, score2 = pick_best_frame(samples, take2, ref_sharp=100, pool=pool)
     assert i2 in (13, 14) and score2 > score1
+
+
+def test_back_lat_spread_keeps_the_original_scoring():
+    # strength (elbows + wrists) / 1.3, sharpness and position, nothing else
+    elbows = [0.62, 0.66, 0.70, 0.74, 0.78, 0.82, 0.70]
+    raises = [0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30]
+    sharp = [100, 100, 100, 100, 70, 70, 100]
+    speeds = [0.05, 0.05, 0.05, 0.4, 0.05, 0.05, 0.05]
+    samples = [_lat(i, e, sharp[i], raise_=raises[i], label=BACK_LAT_SPREAD, speed=speeds[i]) for i, e in enumerate(elbows)]
+    hold = Hold(0, 6, BACK_LAT_SPREAD)
+    idx, score = pick_best_frame(samples, hold, ref_sharp=100, ref_strength=1.3, pool=range(7))
+
+    def old(i):
+        return 0.5 * min(samples[i].strength / 1.3, 1) + 0.35 * min(sharp[i] / 100, 1) + 0.15 * max(0, 1 - abs(i - 3) / 3)
+
+    expected = max(range(7), key=old)
+    assert idx == expected and abs(score - old(expected)) < 1e-9

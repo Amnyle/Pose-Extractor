@@ -12,7 +12,6 @@ from .models import Hold, Sample
 MIN_WAIST_RANGE = 0.02      # waist changes smaller than this (in torso lengths) are measurement noise
 MIN_HEAD_RANGE = 0.12       # same for the head-tilt ratio
 MIN_STRENGTH_RANGE = 0.04   # same for how far the elbows are out (torso lengths)
-LAT_SPREADS = (FRONT_LAT_SPREAD, BACK_LAT_SPREAD)
 
 # Weights of each term, per pose. They add up to 1.
 #   expression: how fully the pose is expressed (elbows out, wrists up; for lat spreads: elbows out)
@@ -24,7 +23,6 @@ LAT_SPREADS = (FRONT_LAT_SPREAD, BACK_LAT_SPREAD)
 WEIGHTS = {
     ABS_AND_THIGHS: dict(vacuum=0.50, expression=0.0, head=0.0, sharp=0.20, still=0.15, center=0.15),
     FRONT_LAT_SPREAD: dict(vacuum=0.0, expression=0.50, head=0.10, sharp=0.20, still=0.10, center=0.10),
-    BACK_LAT_SPREAD: dict(vacuum=0.0, expression=0.55, head=0.0, sharp=0.20, still=0.15, center=0.10),
     None: dict(vacuum=0.0, expression=0.40, head=0.0, sharp=0.35, still=0.10, center=0.15),
 }
 
@@ -90,11 +88,11 @@ def _legs_factor(sample: Sample) -> float:
 
 
 def _expression(sample: Sample, label: Optional[str]) -> Optional[float]:
-    """How fully the pose is expressed. For lat spreads only the width of the elbows matters:
-    the hands slide on the waist while the lats open, and that must not count."""
+    """How fully the pose is expressed. For the front lat spread only the width of the elbows
+    matters: the hands slide on the waist while the lats open, and that must not count."""
     if sample.features is None:
         return None
-    if label in LAT_SPREADS:
+    if label == FRONT_LAT_SPREAD:
         return sample.features.elbow_lat
     return sample.strength
 
@@ -128,7 +126,7 @@ def pick_best_frame(
     w_sharp: Optional[float] = None,
     w_center: Optional[float] = None,
     ref_sharp: Optional[float] = None,
-    ref_strength: Optional[float] = None,  # kept for compatibility; expression is now ranked, see `pool`
+    ref_strength: Optional[float] = None,
     pool: Optional[Sequence[int]] = None,
     motion_thresh: float = 0.5,
 ) -> tuple[int, float]:
@@ -144,10 +142,15 @@ def pick_best_frame(
 
     Abs and thighs also prefers both feet level (a foot in front of the other lowers the score).
 
+    The back lat spread keeps the original scoring, which gave the right moment for it:
+    0.5 strength (divided by `ref_strength`), 0.35 sharpness, 0.15 position, no ranking or pool.
+
     `ref_sharp` is the sharpness that counts as full marks. Pass a value taken from the whole
     video to make scores comparable between holds; without it the sharpest frame of the hold is used.
     """
     indices = list(range(hold.start, hold.end + 1))
+    if hold.label == BACK_LAT_SPREAD:
+        return _pick_back_lat_spread(samples, indices, ref_sharp, ref_strength)
     pool = sorted(set(pool) | set(indices)) if pool is not None else indices
     label = hold.label if hold.label in WEIGHTS else None
     w = dict(WEIGHTS[label])
@@ -181,6 +184,28 @@ def pick_best_frame(
         score = sample.completeness * sum(w[k] * terms[k] for k in w)
         if label == ABS_AND_THIGHS:
             score *= _legs_factor(sample)
+        if best_idx < 0 or score > best_score:
+            best_idx, best_score = i, score
+    return best_idx, best_score
+
+
+def _pick_back_lat_spread(
+    samples: Sequence[Sample], indices: list[int], ref_sharp: Optional[float], ref_strength: Optional[float]
+) -> tuple[int, float]:
+    """The original scoring, kept for the back lat spread."""
+    max_sharp = ref_sharp or max((samples[i].sharpness for i in indices), default=0.0) or 1.0
+    max_strength = ref_strength or max((samples[i].strength for i in indices), default=0.0) or 1.0
+    mid = (indices[0] + indices[-1]) / 2
+    half = max((indices[-1] - indices[0]) / 2, 1e-9)
+    best_idx, best_score = -1, 0.0
+    for i in indices:
+        sample = samples[i]
+        if sample.pose is None:
+            continue
+        centrality = max(0.0, 1.0 - abs(i - mid) / half)
+        sharp = min(sample.sharpness / max_sharp, 1.0)
+        strength = min(sample.strength / max_strength, 1.0)
+        score = sample.completeness * (0.5 * strength + 0.35 * sharp + 0.15 * centrality)
         if best_idx < 0 or score > best_score:
             best_idx, best_score = i, score
     return best_idx, best_score

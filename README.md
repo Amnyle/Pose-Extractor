@@ -73,13 +73,16 @@ Two poses have their own definition of the peak:
   the median torso length of the pose, not the torso of its own frame: crunching or standing taller
   changes how long the torso looks, and would otherwise fake a wider or narrower waist.
   Weights: 50% vacuum, 20% sharpness, 15% stillness, 15% position.
-- **Front / back lat spread**: the widest elbows, which is when the lats are fully open. Only the
+- **Front lat spread**: the widest elbows, which is when the lats are fully open. Only the
   elbows count: the hands sliding on the waist do not. For the front lat spread a straight head is a
   small tie-breaker (10%): the face points are noisy and athletes often look down at their lats.
   Weights (front): 50% spread, 20% sharpness, 10% each for head, stillness and position.
 
+- **Back lat spread** keeps the original scoring, which already gave the right moment:
+  50% strength (elbows out, wrists up, against a fixed full-pose value), 35% sharpness, 15% position.
+
 When a pose is held several times, every take is ranked on one common scale (all frames of all
-takes of that pose), so the take with the real vacuum or the widest spread is the one kept.
+takes of that pose), so the take with the real vacuum or the widest spread is the one kept (back lat spread excepted).
 
 - **Alternates**: for every pose, `--alternates N` (default 3) also saves N frames spread over the
   hold in `alternates/`, so the timing can be corrected by eye. `--alternates 0` turns them off.

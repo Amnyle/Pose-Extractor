@@ -9,6 +9,7 @@ import numpy as np
 
 from .classic import (
     ABS_AND_THIGHS,
+    BACK_LAT_SPREAD,
     CLASSIC_POSES,
     FRONT_LAT_SPREAD,
     OTHER,
@@ -27,6 +28,10 @@ from .select import pick_best_frame
 from .video import CutDetector, VideoInfo, iter_sampled_frames, person_sharpness, probe_video, resize_max_side
 
 Progress = Callable[[int, int], None]
+
+# A fully expressed pose has elbows ~0.9 torso lengths out and wrists raised: strength about 1.3.
+# Only the back lat spread still uses this fixed reference (its original scoring).
+FULL_STRENGTH = 1.3
 
 
 def analyze_video(
@@ -114,13 +119,14 @@ def extract_poses(
     # Every frame of every take of a pose: the peak cues are ranked on this common scale.
     pools: dict[str, list[int]] = {}
     for hold in candidates:
-        if hold.label != OTHER:
+        if hold.label not in (OTHER, BACK_LAT_SPREAD):
             pools.setdefault(hold.label, []).extend(range(hold.start, hold.end + 1))
 
     picks = []
     for hold in candidates:
         idx, score = pick_best_frame(
-            samples, hold, ref_sharp=ref_sharp, pool=pools.get(hold.label), motion_thresh=cfg.motion_thresh
+            samples, hold, ref_sharp=ref_sharp, ref_strength=FULL_STRENGTH,
+            pool=pools.get(hold.label), motion_thresh=cfg.motion_thresh,
         )
         if idx >= 0:
             picks.append((hold, idx, score))
