@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pose Extractor</title>
+  <meta name="description" content="Pick the best photo of each classic bodybuilding pose from a posing video. Runs on your phone, nothing is uploaded.">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Poses">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body data-view="setup">
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="32" height="32">
+      <div>
+        <h1>Pose Extractor</h1>
+        <p class="tagline">Best photo of each pose, from your posing video</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- 1. Setup ------------------------------------------------------------------------------- -->
+  <main class="view" id="view-setup">
+    <section class="card">
+      <h2><span class="step">1</span>Video</h2>
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file" accept="video/*" hidden>
+        <div class="dz-empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2.5l4-2.5v12l-4-2.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
+          <strong>Import a video</strong>
+          <span>From your camera roll or files</span>
+        </div>
+        <div class="dz-chosen">
+          <img id="video-thumb" alt="">
+          <div class="dz-meta">
+            <strong id="video-name"></strong>
+            <span id="video-info"></span>
+            <span class="link">Change</span>
+          </div>
+        </div>
+      </label>
+      <p class="error" id="video-error" hidden></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="step">2</span>Which poses are in it?</h2>
+        <button class="text-btn" id="toggle-all" type="button">Select all</button>
+      </div>
+      <div class="pose-grid" id="pose-grid" role="group" aria-label="Poses in the video"></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">3</span>Detail</h2>
+      <div class="segmented" id="speed" role="radiogroup" aria-label="Analysis detail">
+        <button type="button" role="radio" data-fps="4">Fast</button>
+        <button type="button" role="radio" data-fps="6">Balanced</button>
+        <button type="button" role="radio" data-fps="10">Thorough</button>
+      </div>
+      <p class="hint" id="speed-hint"></p>
+    </section>
+
+    <p class="privacy">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/></svg>
+      Everything runs on this device. Your video is never uploaded.
+    </p>
+
+    <div class="actionbar">
+      <button class="primary" id="start" type="button" disabled>Find my poses</button>
+    </div>
+  </main>
+
+  <!-- 2. Analysing ---------------------------------------------------------------------------- -->
+  <main class="view" id="view-analysing">
+    <section class="card analysing">
+      <div class="preview">
+        <canvas id="preview"></canvas>
+        <span class="live-label" id="live-label"></span>
+      </div>
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="progress">
+        <div class="bar" id="bar"></div>
+      </div>
+      <p class="status" id="status">Starting…</p>
+      <div class="seen" id="seen"></div>
+      <p class="hint">Keep the app open until it finishes.</p>
+    </section>
+    <div class="actionbar">
+      <button class="secondary" id="cancel" type="button">Cancel</button>
+    </div>
+  </main>
+
+  <!-- 3. Results ------------------------------------------------------------------------------ -->
+  <main class="view" id="view-results">
+    <p class="summary" id="summary"></p>
+    <div id="results"></div>
+    <div class="actionbar two">
+      <button class="secondary" id="again" type="button">New video</button>
+      <button class="primary" id="save-all" type="button">Save photos</button>
+    </div>
+  </main>
+
+  <dialog id="viewer">
+    <img id="viewer-img" alt="">
+    <form method="dialog"><button class="secondary" type="submit">Close</button></form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

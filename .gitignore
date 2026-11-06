@@ -26,3 +26,5 @@ results/
 *.mov
 *.avi
 *.mkv
+# phone app: downloaded by app/scripts/fetch-vendor.sh
+app/vendor/

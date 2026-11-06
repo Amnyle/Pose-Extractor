@@ -18,6 +18,37 @@ results/
 
 The tool also prints which of the six poses it did not find.
 
+## Phone app
+
+`app/` is the same tool as an app for your phone: import a video, tick which of the six poses are in
+it, and get the best photo of each. When the tool is not sure (another take or moment is nearly as
+good), the pose is marked **Check** and the other good moments are shown underneath, to pick with a
+tap. A pose you ticked but that was not recognised gets **Pick one**: the held moments that look
+most like it, or none. **Save photos** saves the chosen photos at full video resolution (share sheet
+on the phone, downloads on a computer).
+
+Everything runs on the phone (MediaPipe in the browser); the video is never uploaded. After the
+first use it also works offline.
+
+**Install it**: it is published on GitHub Pages by `.github/workflows/pages.yml` on every push to
+`main`. Once, in the repository on GitHub: Settings > Pages > Source: **GitHub Actions**. The app is
+then at `https://<owner>.github.io/<repo>/`. Open that link on the phone and choose
+**Add to Home Screen** (Safari: Share button; Chrome: menu or the install prompt). It opens full
+screen like any other app.
+
+**Run it locally**:
+
+```
+app/scripts/fetch-vendor.sh                 # MediaPipe runtime + pose model into app/vendor (once)
+cd app && python -m http.server 8000        # then open http://localhost:8000
+node --test app/tests/*.test.mjs            # the JavaScript gives the same results as the Python tool
+```
+
+The app's logic (`app/js/classic.js`, `holds.js`, `select.js`, `pipeline.js`) is a line-by-line port of
+the Python modules. `app/tests/golden.json` holds three posing routines run through the Python tool;
+regenerate it with `python app/tests/make_golden.py` after changing the Python logic, and the
+JavaScript tests show where the port must follow.
+
 ## Install (Linux)
 
 ```
@@ -152,6 +183,7 @@ pose_extractor/
   dedupe.py      merging look-alike unnamed poses
   output.py      photos, contact sheet, report
 tests/           pytest suite: synthetic video + real keypoints from the calibration session
+app/             the phone app (installable web app, same logic in JavaScript)
 ```
 
 Run the tests with `pytest`. They need no pose model.

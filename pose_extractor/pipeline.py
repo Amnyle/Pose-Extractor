@@ -55,37 +55,49 @@ def analyze_video(
     samples: list[Sample] = []
     for idx, t, small, cut in prefetch(frames()):
         kp = estimator.detect(small, int(round(t * 1000)))
-        if kp is None:
-            samples.append(Sample(idx, t, None, 0.0, person_sharpness(small, None), cut))
-        else:
-            h, w = small.shape[:2]
-            pose = normalize_pose(kp, cfg.min_visibility)
-            feats = arm_features(kp) if pose is not None else None
-            if cfg.classic:
-                label = classify(feats, cfg.arm_raise_min)
-            else:
-                label = OTHER if pose is not None else None
-            mask = getattr(estimator, "last_mask", None)
-            samples.append(
-                Sample(
-                    index=idx,
-                    time=t,
-                    pose=pose,
-                    completeness=completeness(kp, w, h, cfg.min_visibility),
-                    sharpness=person_sharpness(small, kp, cfg.min_visibility),
-                    cut=cut,
-                    features=feats,
-                    label=label,
-                    strength=strength(feats) if feats is not None else 0.0,
-                    # moment-of-peak cues, measured only where the pose needs them
-                    waist=waist_ratio(mask, kp) if label == ABS_AND_THIGHS and mask is not None else None,
-                    head_drop=head_drop(kp) if label == FRONT_LAT_SPREAD else None,
-                    torso_px=_torso_px(kp),
-                )
-            )
+        h, w = small.shape[:2]
+        sharp = person_sharpness(small, kp, cfg.min_visibility)
+        samples.append(build_sample(idx, t, kp, w, h, sharp, cut, cfg, getattr(estimator, "last_mask", None)))
         if progress:
             progress(len(samples), expected)
     return info, samples
+
+
+def build_sample(
+    index: int,
+    time: float,
+    kp: Optional[np.ndarray],
+    width: int,
+    height: int,
+    sharpness: float,
+    cut: bool,
+    cfg: Config,
+    mask: Optional[np.ndarray] = None,
+) -> Sample:
+    """Everything measured on one frame, from its keypoints (None if nobody was found)."""
+    if kp is None:
+        return Sample(index, time, None, 0.0, sharpness, cut)
+    pose = normalize_pose(kp, cfg.min_visibility)
+    feats = arm_features(kp) if pose is not None else None
+    if cfg.classic:
+        label = classify(feats, cfg.arm_raise_min)
+    else:
+        label = OTHER if pose is not None else None
+    return Sample(
+        index=index,
+        time=time,
+        pose=pose,
+        completeness=completeness(kp, width, height, cfg.min_visibility),
+        sharpness=sharpness,
+        cut=cut,
+        features=feats,
+        label=label,
+        strength=strength(feats) if feats is not None else 0.0,
+        # moment-of-peak cues, measured only where the pose needs them
+        waist=waist_ratio(mask, kp) if label == ABS_AND_THIGHS and mask is not None else None,
+        head_drop=head_drop(kp) if label == FRONT_LAT_SPREAD else None,
+        torso_px=_torso_px(kp),
+    )
 
 
 def extract_poses(
@@ -101,7 +113,12 @@ def extract_poses(
     """
     cfg = cfg or Config()
     info, samples = analyze_video(video_path, estimator, cfg, progress)
+    holds, results = select_poses(samples, cfg)
+    return info, samples, holds, results
 
+
+def select_poses(samples: list[Sample], cfg: Config) -> tuple[list[Hold], list[ExtractedPose]]:
+    """Holds and final poses from the analysed samples (fills in each sample's speed)."""
     poses = [s.pose for s in samples]
     times = [s.time for s in samples]
     cuts = [s.cut for s in samples]
@@ -135,7 +152,7 @@ def extract_poses(
         if idx >= 0:
             picks.append((hold, idx, score))
     if not picks:
-        return info, samples, holds, []
+        return holds, []
 
     descriptors = [samples[i].pose for _, i, _ in picks]
     scores = [score for _, _, score in picks]
@@ -174,7 +191,7 @@ def extract_poses(
                 alternates=[(samples[i].index, samples[i].time) for i in _alternates(samples, hold, sample_idx, cfg.alternates)],
             )
         )
-    return info, samples, holds, results
+    return holds, results
 
 
 def _torso_px(kp: np.ndarray) -> Optional[float]:
