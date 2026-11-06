@@ -30,7 +30,11 @@ on the phone, downloads on a computer).
 Everything runs on the phone (MediaPipe in the browser); the video is never uploaded. After the
 first use it also works offline.
 
-**Install it**: it is published on GitHub Pages by `.github/workflows/pages.yml` on every push to
+**Android app**: the same app as a real Android app (APK), with photos saved straight to the
+gallery. Install it from https://github.com/Amnyle/Pose-Extractor/releases/tag/android-latest, see
+[mobile/README.md](mobile/README.md).
+
+**Install it from the browser**: it is published on GitHub Pages by `.github/workflows/pages.yml` on every push to
 `main`. Once, in the repository on GitHub: Settings > Pages > Source: **GitHub Actions**. The app is
 then at `https://<owner>.github.io/<repo>/`. Open that link on the phone and choose
 **Add to Home Screen** (Safari: Share button; Chrome: menu or the install prompt). It opens full
@@ -184,6 +188,7 @@ pose_extractor/
   output.py      photos, contact sheet, report
 tests/           pytest suite: synthetic video + real keypoints from the calibration session
 app/             the phone app (installable web app, same logic in JavaScript)
+mobile/          the phone app packaged as an Android app (Capacitor)
 ```
 
 Run the tests with `pytest`. They need no pose model.

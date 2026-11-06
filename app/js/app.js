@@ -24,6 +24,10 @@ const SPEED_HINTS = {
 const BONES = [[1, 2], [1, 3], [3, 5], [2, 4], [4, 6], [1, 7], [2, 8], [7, 8], [7, 9], [9, 11], [8, 10], [10, 12]];
 
 const $ = (id) => document.getElementById(id);
+
+// Inside the Android app (Capacitor), a few things go through native code instead of the browser.
+const native = window.Capacitor?.isNativePlatform?.() ?? false;
+const callNative = (method, options) => window.Capacitor.nativePromise('GallerySaver', method, options);
 const store = {
   get(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
@@ -104,7 +108,10 @@ async function start() {
   $('bar').style.width = '0%';
   $('live-label').textContent = '';
   state.abort = new AbortController();
-  const wakeLock = await navigator.wakeLock?.request('screen').catch(() => null);
+  const wakeLock = native
+    ? await callNative('keepAwake', { on: true }).then(() => ({ release: () => callNative('keepAwake', { on: false }) })).catch(() => null)
+    : await navigator.wakeLock?.request('screen').catch(() => null);
+  history.pushState({ view: 'analysing' }, '');
   try {
     state.estimator ??= await (window.__createEstimator?.() ?? PoseEstimator.create((s) => { $('status').textContent = s; }));
     const cfg = { ...DEFAULT_CONFIG, sampleFps: state.fps };
@@ -129,10 +136,10 @@ async function start() {
     await showResults(selected, choices);
   } catch (err) {
     if (err.name === 'AbortError') {
-      document.body.dataset.view = 'setup';
+      showSetup();
     } else {
       console.error(err);
-      document.body.dataset.view = 'setup';
+      showSetup();
       $('video-error').textContent = `Analysis failed: ${err.message || err}`;
       $('video-error').hidden = false;
     }
@@ -195,6 +202,13 @@ async function showResults(selected, choices) {
   state.results = results;
   renderResults();
   document.body.dataset.view = 'results';
+  history.replaceState({ view: 'results' }, '');
+  window.scrollTo(0, 0);
+}
+
+function showSetup() {
+  document.body.dataset.view = 'setup';
+  if (history.state?.view) history.back();   // drop the entry pushed by start(): back then exits
   window.scrollTo(0, 0);
 }
 
@@ -249,7 +263,10 @@ async function saveAll() {
       const blob = await grabFrame(state.video, c.time, Infinity, 0.95);
       files.push(new File([blob], `${String(k + 1).padStart(2, '0')}_${r.pose}_${c.time.toFixed(2)}s.jpg`, { type: 'image/jpeg' }));
     }
-    if (navigator.canShare?.({ files })) {
+    if (native) {
+      for (const f of files) await callNative('save', { fileName: f.name, data: await toBase64(f) });
+      toast(`${files.length} photo${files.length > 1 ? 's' : ''} saved to Pictures/Poses`);
+    } else if (navigator.canShare?.({ files })) {
       try {
         await navigator.share({ files, title: 'Poses' });
         toast('Shared');
@@ -259,9 +276,20 @@ async function saveAll() {
     } else {
       downloadAll(files);
     }
+  } catch (err) {
+    toast(`Could not save: ${err.message || err}`);
   } finally {
     renderResults();
   }
+}
+
+function toBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1]);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 function downloadAll(files) {
@@ -325,14 +353,16 @@ $('results').addEventListener('click', (e) => {
   }
 });
 $('save-all').addEventListener('click', saveAll);
-$('again').addEventListener('click', () => {
-  document.body.dataset.view = 'setup';
-  window.scrollTo(0, 0);
+$('again').addEventListener('click', showSetup);
+// Back button (phone or browser): from the results or during an analysis, return to the start.
+window.addEventListener('popstate', () => {
+  if (document.body.dataset.view === 'analysing') state.abort?.abort();
+  else if (document.body.dataset.view === 'results') showSetup();
 });
 
 renderPoseGrid();
 renderSpeed();
 
-if ('serviceWorker' in navigator && window.isSecureContext) {
+if (!native && 'serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }

@@ -1,0 +1,8 @@
+{
+  "appId": "io.github.amnyle.poseextractor",
+  "appName": "Poses",
+  "webDir": "../app",
+  "android": {
+    "backgroundColor": "#0f1115"
+  }
+}
