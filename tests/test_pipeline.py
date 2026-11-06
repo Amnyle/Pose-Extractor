@@ -169,3 +169,35 @@ def test_alternates_are_spread_over_the_hold_and_saved(abs_video, tmp_path):
 
     _, _, _, none = extract_poses(abs_video, AbsEstimator(), Config(sample_fps=10, alternates=0))
     assert none[0].alternates == []
+
+
+# ---- background frame decoding ------------------------------------------------------------------
+
+import threading
+
+from pose_extractor.video import prefetch
+
+
+def test_prefetch_keeps_items_and_order():
+    assert list(prefetch(iter(range(100)), depth=3)) == list(range(100))
+    assert list(prefetch(iter([]))) == []
+
+
+def test_prefetch_reraises_errors_from_the_producer():
+    def broken():
+        yield 1
+        raise IOError("bad frame")
+
+    got = []
+    with pytest.raises(IOError, match="bad frame"):
+        for item in prefetch(broken()):
+            got.append(item)
+    assert got == [1]
+
+
+def test_prefetch_stops_its_thread_when_the_consumer_stops_early():
+    before = threading.active_count()
+    gen = prefetch(iter(range(10_000)), depth=2)
+    assert next(gen) == 0
+    gen.close()
+    assert threading.active_count() == before

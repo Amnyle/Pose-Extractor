@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional, TypeVar
+
+T = TypeVar("T")
 
 import cv2
 import numpy as np
@@ -100,6 +104,52 @@ def iter_frames_at(path: Path | str, wanted: set[int]) -> Iterator[tuple[int, np
                 break
     finally:
         cap.release()
+
+
+def prefetch(items: Iterable[T], depth: int = 4) -> Iterator[T]:
+    """Produce `items` in a background thread, at most `depth` ahead, and yield them in order.
+
+    Video decoding (OpenCV) and pose estimation (MediaPipe) both release the GIL, so running the
+    decoding here lets it overlap with the pose model working on the previous frame. Items and
+    their order are exactly those of `items`; an exception raised while producing them is
+    re-raised in the caller. Stopping early (break, close) stops the thread.
+    """
+    q: queue.Queue = queue.Queue(maxsize=max(1, depth))
+    stop = threading.Event()
+    done = object()
+
+    def put(item) -> bool:
+        while not stop.is_set():
+            try:
+                q.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def produce() -> None:
+        try:
+            for item in items:
+                if not put((None, item)):
+                    return
+        except BaseException as exc:  # handed to the consumer
+            put((exc, None))
+            return
+        put((None, done))
+
+    thread = threading.Thread(target=produce, name="frame-prefetch", daemon=True)
+    thread.start()
+    try:
+        while True:
+            exc, item = q.get()
+            if exc is not None:
+                raise exc
+            if item is done:
+                return
+            yield item
+    finally:
+        stop.set()
+        thread.join()
 
 
 def resize_max_side(frame: np.ndarray, max_side: int) -> np.ndarray:

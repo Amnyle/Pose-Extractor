@@ -25,7 +25,7 @@ from .geometry import completeness, normalize_pose
 from .holds import find_holds, pose_speeds, split_by_label, split_on_drift
 from .models import Config, ExtractedPose, Hold, Sample
 from .select import pick_best_frame
-from .video import CutDetector, VideoInfo, iter_sampled_frames, person_sharpness, probe_video, resize_max_side
+from .video import CutDetector, VideoInfo, iter_sampled_frames, person_sharpness, prefetch, probe_video, resize_max_side
 
 Progress = Callable[[int, int], None]
 
@@ -46,10 +46,14 @@ def analyze_video(
     stop = min(info.duration, cfg.end) if cfg.end is not None else info.duration
     expected = max(1, int((stop - cfg.start) * cfg.sample_fps))
 
+    def frames():
+        # decoding, downscaling and cut detection run in a background thread (see `prefetch`)
+        for idx, t, frame in iter_sampled_frames(video_path, cfg.sample_fps, cfg.start, cfg.end):
+            small = resize_max_side(frame, cfg.analysis_max_side)
+            yield idx, t, small, detector.update(small)
+
     samples: list[Sample] = []
-    for idx, t, frame in iter_sampled_frames(video_path, cfg.sample_fps, cfg.start, cfg.end):
-        small = resize_max_side(frame, cfg.analysis_max_side)
-        cut = detector.update(small)
+    for idx, t, small, cut in prefetch(frames()):
         kp = estimator.detect(small, int(round(t * 1000)))
         if kp is None:
             samples.append(Sample(idx, t, None, 0.0, person_sharpness(small, None), cut))
