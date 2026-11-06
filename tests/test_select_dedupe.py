@@ -53,7 +53,7 @@ def test_group_holds_threshold_controls_merging():
 
 # ---- moment-of-peak selection ----------------------------------------------------------------
 
-from pose_extractor.classic import ABS_AND_THIGHS, FRONT_LAT_SPREAD, ArmFeatures
+from pose_extractor.classic import ABS_AND_THIGHS, BACK_LAT_SPREAD, FRONT_LAT_SPREAD, ArmFeatures
 
 
 def _s(i, sharp=100.0, waist=None, head=None, legs_dy=0.0, strength=1.0):
@@ -102,3 +102,66 @@ def test_other_poses_do_not_use_waist_or_head():
     for s in samples:
         s.label = "front_double_biceps"
     assert pick_best_frame(samples, Hold(0, 4, "front_double_biceps"))[0] == 2   # sharpest frame wins
+
+
+# ---- timing fixes: lat spread, abs and thighs across takes ------------------------------------
+
+def _lat(i, elbow, sharp=100.0, head=None, label=FRONT_LAT_SPREAD, speed=None, raise_=0.3):
+    return Sample(i, i / 6, np.zeros((13, 2)), 1.0, sharp, False,
+                  ArmFeatures(raise_, elbow, 0.7, 1), label, elbow + 0.25 * raise_, None, head, speed=speed)
+
+
+def test_front_lat_spread_is_taken_at_the_widest_spread_not_the_middle_of_the_hold():
+    # the lats open progressively and are fully spread late in the hold, then released
+    elbows = [0.62, 0.64, 0.66, 0.68, 0.70, 0.73, 0.78, 0.81, 0.82, 0.80, 0.70]
+    sharp = [100, 100, 100, 100, 100, 95, 92, 92, 92, 95, 100]
+    samples = [_lat(i, e, sharp[i]) for i, e in enumerate(elbows)]
+    idx, _ = pick_best_frame(samples, Hold(0, 10, FRONT_LAT_SPREAD))
+    assert idx in (7, 8, 9)
+
+
+def test_front_lat_spread_head_tilt_does_not_override_a_clearly_wider_spread():
+    elbows = [0.62, 0.63, 0.64, 0.65, 0.78, 0.80, 0.80, 0.70]
+    heads = [0.20, 0.20, 0.20, 0.20, 0.45, 0.45, 0.45, 0.30]   # looks down at the lats at the peak
+    samples = [_lat(i, e, head=heads[i]) for i, e in enumerate(elbows)]
+    idx, _ = pick_best_frame(samples, Hold(0, 7, FRONT_LAT_SPREAD))
+    assert idx in (4, 5, 6)
+
+
+def test_lat_spread_ignores_the_hands_sliding_on_the_waist():
+    elbows = [0.70, 0.70, 0.78, 0.78, 0.70, 0.70, 0.70]
+    raises = [0.30, 0.30, 0.30, 0.30, 0.90, 0.90, 0.30]   # hands slide up, elbows do not open
+    samples = [_lat(i, e, raise_=raises[i], label=BACK_LAT_SPREAD) for i, e in enumerate(elbows)]
+    assert pick_best_frame(samples, Hold(0, 6, BACK_LAT_SPREAD))[0] in (2, 3)
+
+
+def test_a_moving_frame_is_not_chosen_when_the_pose_is_otherwise_equal():
+    speeds = [0.05, 0.05, 0.05, 0.45, 0.05, 0.05, 0.05]
+    samples = [_lat(i, 0.75, speed=v) for i, v in enumerate(speeds)]
+    assert pick_best_frame(samples, Hold(0, 6, FRONT_LAT_SPREAD))[0] != 3
+
+
+def test_abs_waist_is_not_fooled_by_the_torso_looking_longer():
+    # frames 2-3: the athlete stands taller (torso 230 px), the waist does not change (100 px);
+    # frames 5-6: a real vacuum, the waist drops to 90 px with the usual 200 px torso.
+    torso = [200, 200, 230, 230, 200, 200, 200, 200, 200]
+    waist_px = [100, 100, 100, 100, 100, 90, 90, 100, 100]
+    samples = []
+    for i in range(9):
+        s = _s(i, 100.0, waist_px[i] / torso[i])
+        s.torso_px = float(torso[i])
+        samples.append(s)
+    assert pick_best_frame(samples, Hold(0, 8, ABS_AND_THIGHS))[0] in (5, 6)
+
+
+def test_abs_take_with_the_real_vacuum_beats_a_sharper_take_without_one():
+    # take 1 (frames 0-7): no vacuum, only noise; take 2 (frames 10-17): a real vacuum
+    waists = [0.50, 0.52, 0.50, 0.53, 0.51, 0.50, 0.52, 0.50, None, None,
+              0.50, 0.50, 0.46, 0.41, 0.40, 0.46, 0.50, 0.50]
+    sharp = [100] * 8 + [0, 0] + [85] * 8
+    samples = [_s(i, sharp[i], waists[i]) for i in range(18)]
+    take1, take2 = Hold(0, 7, ABS_AND_THIGHS), Hold(10, 17, ABS_AND_THIGHS)
+    pool = list(range(0, 8)) + list(range(10, 18))
+    i1, score1 = pick_best_frame(samples, take1, ref_sharp=100, pool=pool)
+    i2, score2 = pick_best_frame(samples, take2, ref_sharp=100, pool=pool)
+    assert i2 in (13, 14) and score2 > score1

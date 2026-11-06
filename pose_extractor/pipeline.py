@@ -28,9 +28,6 @@ from .video import CutDetector, VideoInfo, iter_sampled_frames, person_sharpness
 
 Progress = Callable[[int, int], None]
 
-# A fully expressed pose has elbows ~0.9 torso lengths out and wrists raised: strength about 1.3.
-FULL_STRENGTH = 1.3
-
 
 def analyze_video(
     video_path: Path | str,
@@ -74,6 +71,7 @@ def analyze_video(
                     # moment-of-peak cues, measured only where the pose needs them
                     waist=waist_ratio(mask, kp) if label == ABS_AND_THIGHS and mask is not None else None,
                     head_drop=head_drop(kp) if label == FRONT_LAT_SPREAD else None,
+                    torso_px=_torso_px(kp),
                 )
             )
         if progress:
@@ -101,6 +99,8 @@ def extract_poses(
     labels = [s.label for s in samples]
 
     speeds = pose_speeds(poses, times, cuts)
+    for i, s in enumerate(samples):
+        s.speed = _frame_speed(speeds, i)
     holds = find_holds(speeds, times, cfg.motion_thresh, cfg.min_hold)
     holds = split_on_drift(holds, poses, times, cfg.drift_thresh, cfg.min_hold)
     holds = split_by_label(holds, labels, times, cfg.min_hold)
@@ -111,9 +111,17 @@ def extract_poses(
     sharp_values = [s.sharpness for s in samples if s.pose is not None]
     ref_sharp = float(np.percentile(sharp_values, 90)) if sharp_values else None
 
+    # Every frame of every take of a pose: the peak cues are ranked on this common scale.
+    pools: dict[str, list[int]] = {}
+    for hold in candidates:
+        if hold.label != OTHER:
+            pools.setdefault(hold.label, []).extend(range(hold.start, hold.end + 1))
+
     picks = []
     for hold in candidates:
-        idx, score = pick_best_frame(samples, hold, ref_sharp=ref_sharp, ref_strength=FULL_STRENGTH)
+        idx, score = pick_best_frame(
+            samples, hold, ref_sharp=ref_sharp, pool=pools.get(hold.label), motion_thresh=cfg.motion_thresh
+        )
         if idx >= 0:
             picks.append((hold, idx, score))
     if not picks:
@@ -157,6 +165,18 @@ def extract_poses(
             )
         )
     return info, samples, holds, results
+
+
+def _torso_px(kp: np.ndarray) -> Optional[float]:
+    kp = np.asarray(kp, dtype=float)
+    torso = float(np.linalg.norm(kp[[11, 12], :2].mean(axis=0) - kp[[23, 24], :2].mean(axis=0)))
+    return torso if np.isfinite(torso) and torso > 0 else None
+
+
+def _frame_speed(speeds: np.ndarray, i: int) -> Optional[float]:
+    """Movement around sample i: the larger of the speeds just before and just after it."""
+    around = [v for v in speeds[i : i + 2] if not np.isnan(v)]
+    return float(max(around)) if around else None
 
 
 def _alternates(samples: list[Sample], hold: Hold, best: int, count: int) -> list[int]:

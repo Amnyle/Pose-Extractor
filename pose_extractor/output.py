@@ -99,6 +99,29 @@ def _hold_report(hold: Hold, samples: Sequence[Sample]) -> dict:
     return info
 
 
+def _timeline(result: ExtractedPose, samples: Sequence[Sample]) -> list[dict]:
+    """What was measured on every frame of the chosen hold, to see why this moment was picked."""
+    rows = []
+    for s in samples:
+        if not result.hold_start <= s.time <= result.hold_end or s.pose is None:
+            continue
+        row = {"time": round(s.time, 2), "chosen": s.index == result.frame_index, "sharpness": round(s.sharpness, 1)}
+        if s.features is not None:
+            row["elbow_lat"] = round(s.features.elbow_lat, 3)
+            row["legs_dy"] = round(s.features.legs_dy, 3)
+        if s.waist is not None:
+            if s.torso_px:
+                row["waist_px"] = round(s.waist * s.torso_px, 1)
+            else:
+                row["waist"] = round(s.waist, 3)
+        if s.head_drop is not None:
+            row["head_drop"] = round(s.head_drop, 3)
+        if s.speed is not None:
+            row["speed"] = round(s.speed, 3)
+        rows.append(row)
+    return rows
+
+
 def write_report(
     out_dir: Path | str,
     video_path: Path | str,
@@ -128,7 +151,7 @@ def write_report(
             "photos": len(results),
         },
         "missing_poses": list(missing),
-        "poses": [asdict(r) for r in results],
+        "poses": [dict(asdict(r), timeline=_timeline(r, samples)) for r in results],
         "holds": [_hold_report(h, samples) for h in holds],
     }
     path = Path(out_dir) / "report.json"

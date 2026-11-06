@@ -46,6 +46,8 @@ class Sample:
     strength: float = 0.0            # how fully the pose is expressed (peak-frame selection)
     waist: Optional[float] = None    # narrowest waist width in torso lengths (abs and thighs only)
     head_drop: Optional[float] = None  # nose below ears, in ear distances (front lat spread only)
+    torso_px: Optional[float] = None   # torso length in pixels (shoulder midpoint to hip midpoint)
+    speed: Optional[float] = None      # how fast the body moves at this frame (torso lengths / s)
 
 
 @dataclass

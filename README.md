@@ -57,17 +57,35 @@ cannot tell front from back, because MediaPipe reports a confident face even fro
 
 ## The right moment inside a pose
 
+Every frame of a hold gets a score from a few terms, each ranked from 0 to 1. A term that hardly
+changes (inside the measurement noise) is ignored, so it cannot decide the photo by accident.
+
+- **Expression**: how fully the pose is expressed (elbows out, wrists up). Ranked against the other
+  frames of the same pose, so a slightly wider spread really wins.
+- **Sharpness**, **stillness** (the peak of a pose is held, not passed through) and **position**
+  (away from the edges of the hold, which touch the movement in and out of the pose).
+
+Two poses have their own definition of the peak:
+
 - **Abs and thighs**: the stomach vacuum. MediaPipe also gives the outline of the body; the tool
-  measures the width of the waist on it in every frame of the hold and takes the narrowest one, with
-  both feet level (a foot in front of the other lowers the score). The waist is compared with the
-  other frames of the same hold, so no absolute numbers are needed. If the waist hardly changes
-  (under 2% of the torso length, which is the measurement noise), it is ignored and the frame is
-  chosen by sharpness and position in the hold instead.
-- **Front lat spread**: head straight instead of looking down. The nose is compared with the ears
-  in every frame of the hold and the frames with the head most upright are preferred. This is a
-  preference, not a rule: the body model's face points are noisy.
+  measures the width of the waist in every frame and takes the narrowest one, with both feet level
+  (a foot in front of the other lowers the score). The waist is measured in pixels and divided by
+  the median torso length of the pose, not the torso of its own frame: crunching or standing taller
+  changes how long the torso looks, and would otherwise fake a wider or narrower waist.
+  Weights: 50% vacuum, 20% sharpness, 15% stillness, 15% position.
+- **Front / back lat spread**: the widest elbows, which is when the lats are fully open. Only the
+  elbows count: the hands sliding on the waist do not. For the front lat spread a straight head is a
+  small tie-breaker (10%): the face points are noisy and athletes often look down at their lats.
+  Weights (front): 50% spread, 20% sharpness, 10% each for head, stillness and position.
+
+When a pose is held several times, every take is ranked on one common scale (all frames of all
+takes of that pose), so the take with the real vacuum or the widest spread is the one kept.
+
 - **Alternates**: for every pose, `--alternates N` (default 3) also saves N frames spread over the
   hold in `alternates/`, so the timing can be corrected by eye. `--alternates 0` turns them off.
+- **Timeline**: in `report.json`, each pose has a `timeline` with what was measured on every frame
+  of its hold (`elbow_lat`, `waist_px`, `head_drop`, `speed`, `sharpness`) and which frame was
+  `chosen`. If the timing is still off, this shows which measurement misled the choice.
 
 ## When a pose is missing or wrong
 
