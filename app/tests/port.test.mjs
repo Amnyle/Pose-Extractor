@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { CLASSIC_POSES, armFeatures, classify } from '../js/classic.js';
-import { analyseHolds, bestPerPose, buildChoices, buildSample } from '../js/pipeline.js';
+import { analyseHolds, bestPerPose, buildChoices, buildSample, finishedPoses } from '../js/pipeline.js';
 
 const golden = JSON.parse(readFileSync(new URL('./golden.json', import.meta.url)));
 const userFrames = JSON.parse(readFileSync(new URL('../../tests/data/user_frames.json', import.meta.url)));
@@ -112,4 +112,31 @@ test('choices: near-equal neighbours in one steady hold are not doubt, another e
   assert.equal(steady.unsure, false);
   const twoTakes = buildChoices(samples, [hold(0, 7, [0.7, 0.8, 0.8, 0.7, 0.6, 0.6, 0.6, 0.6]), hold(15, 22, [0.6, 0.79, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6])], ['side_chest']).side_chest;
   assert.equal(twoTakes.unsure, true);
+});
+
+test('stop when found: all six poses are finished well before the end, and stopping there still finds them', () => {
+  const g = golden[0].input;
+  const all = g.map((s) => buildSample({ ...s, mask: s.maskRect ? mask(s.maskRect, s.width, s.height) : null }));
+  let stop = null;
+  for (let n = 6; n <= all.length; n += 6) {
+    const done = finishedPoses(all.slice(0, n));
+    if (CLASSIC_POSES.every((p) => done.has(p))) { stop = n; break; }
+  }
+  assert.ok(stop !== null && stop < all.length - 30, `stopped at ${stop} of ${all.length}`);
+  // the routine shows the six poses once by ~29 s, then abs and front lat spread again
+  const part = all.slice(0, stop).map((s) => ({ ...s }));
+  const { holds } = analyseHolds(part);
+  const choices = buildChoices(part, holds, CLASSIC_POSES);
+  for (const p of CLASSIC_POSES) assert.equal(choices[p].status, 'found', p);
+});
+
+test('stop when found: a pose still being held does not count as finished', () => {
+  const g = golden[0].input;
+  const all = g.map((s) => buildSample(s));
+  const { holds } = analyseHolds(all.map((s) => ({ ...s })));
+  const first = holds.find((h) => h.label === 'front_double_biceps');
+  const during = finishedPoses(all.slice(0, first.end + 1));
+  assert.equal(during.has('front_double_biceps'), false);
+  const after = finishedPoses(all.slice(0, first.end + 6));
+  assert.equal(after.has('front_double_biceps'), true);
 });

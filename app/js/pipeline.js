@@ -82,6 +82,27 @@ export function analyseHolds(samples, cfg = DEFAULT_CONFIG) {
   return { holds, refSharp };
 }
 
+/**
+ * Named poses that already have a finished hold: held for at least `minHold`, and over (the athlete
+ * has moved on for at least `settle` seconds), so the hold's best frame is known.
+ * Used to stop the analysis early once every pose the user expects has been seen.
+ */
+export function finishedPoses(samples, cfg = DEFAULT_CONFIG, settle = 0.5) {
+  const done = new Set();
+  if (samples.length < 3) return done;
+  const poses = samples.map((s) => s.pose);
+  const times = samples.map((s) => s.time);
+  const speeds = poseSpeeds(poses, times, samples.map((s) => s.cut));
+  let holds = findHolds(speeds, times, cfg.motionThresh, cfg.minHold);
+  holds = splitOnDrift(holds, poses, times, cfg.driftThresh, cfg.minHold);
+  holds = splitByLabel(holds, samples.map((s) => s.label), times, cfg.minHold);
+  const now = times[times.length - 1];
+  for (const h of holds) {
+    if (h.label && h.label !== OTHER && now - times[h.end] >= settle) done.add(h.label);
+  }
+  return done;
+}
+
 /** One photo per named pose: the best frame over all its takes (same choice as the Python tool). */
 export function bestPerPose(samples, holds) {
   const best = {};

@@ -38,6 +38,7 @@ const state = {
   video: null,
   selected: new Set(store.get('poses', CLASSIC_POSES).filter((p) => CLASSIC_POSES.includes(p))),
   fps: store.get('fps', 6),
+  stopWhenFound: store.get('stopWhenFound', true),
   abort: null,
   estimator: null,
   results: null,   // [{pose, status, unsure, choices: [{time, thumb}], picked: index or -1}]
@@ -116,8 +117,9 @@ async function start() {
     state.estimator ??= await (window.__createEstimator?.() ?? PoseEstimator.create((s) => { $('status').textContent = s; }));
     const cfg = { ...DEFAULT_CONFIG, sampleFps: state.fps };
     const preview = $('preview');
-    const { choices } = await analyse(state.video, state.estimator, selected, {
+    const { choices, stoppedAt } = await analyse(state.video, state.estimator, selected, {
       cfg,
+      stopWhenFound: state.stopWhenFound,
       signal: state.abort.signal,
       onProgress: ({ done, total, time, canvas, kp, label }) => {
         drawPreview(preview, canvas, kp);
@@ -133,6 +135,7 @@ async function start() {
       },
     });
     $('status').textContent = 'Preparing the photos…';
+    state.stoppedAt = stoppedAt;
     await showResults(selected, choices);
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -217,7 +220,10 @@ function renderResults() {
   const found = state.results.filter((r) => r.status === 'found').length;
   const toCheck = state.results.filter((r) => r.status !== 'missing' && r.unsure).length;
   $('summary').textContent = `${found} of ${state.results.length} pose${state.results.length > 1 ? 's' : ''} found`
-    + (toCheck ? ` · ${toCheck} to check` : '');
+    + (toCheck ? ` · ${toCheck} to check` : '')
+    + (state.stoppedAt !== null && state.stoppedAt !== undefined
+      ? ` · stopped at ${formatDuration(state.stoppedAt)} of ${formatDuration(state.video.duration)}, all poses found`
+      : '');
 
   $('results').innerHTML = state.results.map((r, k) => {
     const badge = r.status === 'found'
@@ -336,6 +342,11 @@ $('speed').addEventListener('click', (e) => {
   state.fps = Number(b.dataset.fps);
   store.set('fps', state.fps);
   renderSpeed();
+});
+$('stop-when-found').checked = state.stopWhenFound;
+$('stop-when-found').addEventListener('change', (e) => {
+  state.stopWhenFound = e.target.checked;
+  store.set('stopWhenFound', state.stopWhenFound);
 });
 $('start').addEventListener('click', start);
 $('cancel').addEventListener('click', () => state.abort?.abort());
