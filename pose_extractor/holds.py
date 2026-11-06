@@ -77,6 +77,35 @@ def find_holds(
     return holds
 
 
+def split_by_label(
+    holds: Sequence[Hold],
+    labels: Sequence[Optional[str]],
+    times: Sequence[float],
+    min_duration: float,
+) -> list[Hold]:
+    """Cut every hold wherever the pose label changes, keeping runs of at least `min_duration`.
+
+    A hold can contain several things: standing relaxed, then hands on hips, then flared lats.
+    One-sample label flicker (a joint jittering across a threshold) is smoothed away first.
+    Runs whose label is None (relaxed or unknown) are kept so the report can show why they
+    were rejected; callers decide what to do with them.
+    """
+    out: list[Hold] = []
+    for hold in holds:
+        seq = list(labels[hold.start : hold.end + 1])
+        for i in range(1, len(seq) - 1):
+            if seq[i] != seq[i - 1] and seq[i - 1] == seq[i + 1]:
+                seq[i] = seq[i - 1]
+        run = 0
+        for k in range(1, len(seq) + 1):
+            if k == len(seq) or seq[k] != seq[run]:
+                start, end = hold.start + run, hold.start + k - 1
+                if times[end] - times[start] >= min_duration:
+                    out.append(Hold(start, end, seq[run]))
+                run = k
+    return out
+
+
 def split_on_drift(
     holds: Sequence[Hold],
     poses: Sequence[Optional[np.ndarray]],

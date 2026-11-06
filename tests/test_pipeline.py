@@ -8,7 +8,7 @@ from pose_extractor.cli import main
 from pose_extractor.estimator import cache_dir, ensure_model
 from pose_extractor.models import Config
 from pose_extractor.output import make_contact_sheet, save_results
-from pose_extractor.pipeline import extract_poses
+from pose_extractor.pipeline import extract_poses, missing_poses
 from pose_extractor.video import CutDetector, iter_frames_at, iter_sampled_frames, probe_video
 from tests.synthetic import CUT_TIME, NobodyEstimator, TimelineEstimator, render_frame, write_video
 
@@ -37,28 +37,44 @@ def test_cut_detector_fires_only_at_the_background_change():
     assert times == [round(CUT_TIME, 1)]
 
 
-def test_end_to_end_with_dedupe(video, tmp_path):
+def test_end_to_end_names_poses_and_drops_the_relaxed_stance(video, tmp_path):
     cfg = Config(sample_fps=10)
     info, samples, holds, results = extract_poses(video, TimelineEstimator(), cfg)
 
     assert sum(s.cut for s in samples) == 1
-    assert len(holds) == 5            # A, B (split by the cut) x2, C, B again
-    assert len(results) == 3          # A, B, C
-    assert [r.appearances for r in results] == [1, 3, 1]
-    assert 0.0 <= results[0].time <= 1.5
-    assert 4.6 <= results[2].time <= 6.0
+    assert len(holds) == 5                                    # relaxed A, B twice (cut), C, B again
+    assert [h.label for h in holds] == [None, "back_double_biceps", "back_double_biceps", "other", "back_double_biceps"]
+    assert [r.label for r in results] == ["back_double_biceps", "other"]
+    assert [r.appearances for r in results] == [3, 1]         # the three B holds became one photo
+    assert 4.6 <= results[1].time <= 6.0
+    assert missing_poses(results) == [
+        "front_double_biceps", "front_lat_spread", "back_lat_spread", "abs_and_thighs", "side_chest",
+    ]
 
     save_results(video, tmp_path, results)
     sheet = make_contact_sheet(tmp_path, results)
     for r in results:
         img = cv2.imread(str(tmp_path / r.path))
         assert img is not None and img.shape == (480, 640, 3)
+        assert r.label in r.path
     assert sheet.is_file()
 
 
-def test_end_to_end_without_dedupe_keeps_every_hold(video):
-    _, _, holds, results = extract_poses(video, TimelineEstimator(), Config(sample_fps=10, dedupe=False))
-    assert len(results) == len(holds) == 5
+def test_without_dedupe_every_posed_hold_is_kept(video):
+    _, _, _, results = extract_poses(video, TimelineEstimator(), Config(sample_fps=10, dedupe=False))
+    assert [r.label for r in results] == ["back_double_biceps", "back_double_biceps", "other", "back_double_biceps"]
+
+
+def test_no_other_drops_unnamed_poses(video):
+    _, _, _, results = extract_poses(video, TimelineEstimator(), Config(sample_fps=10, keep_other=False))
+    assert [r.label for r in results] == ["back_double_biceps"]
+
+
+def test_generic_mode_keeps_every_held_pose_including_the_relaxed_one(video):
+    _, _, holds, results = extract_poses(video, TimelineEstimator(), Config(sample_fps=10, classic=False))
+    assert len(holds) == 5
+    assert len(results) == 3 and {r.label for r in results} == {"other"}   # A, B (x3 merged), C
+    assert [r.appearances for r in results] == [1, 3, 1]
 
 
 def test_nobody_in_the_video_gives_no_poses(video):
@@ -67,16 +83,24 @@ def test_nobody_in_the_video_gives_no_poses(video):
     assert all(s.pose is None for s in samples)
 
 
-def test_cli_writes_photos_sheet_and_report(video, tmp_path, capsys):
+def test_cli_writes_named_photos_sheet_and_report(video, tmp_path, capsys):
     estimator = TimelineEstimator()
     out = tmp_path / "out"
     code = main([str(video), "-o", str(out), "--sample-fps", "10", "-q"], estimator_factory=lambda: estimator)
     assert code == 0 and estimator.closed
-    assert len(list((out / "poses").glob("pose_*.jpg"))) == 3
+    names = sorted(p.name for p in (out / "poses").glob("*.jpg"))
+    assert len(names) == 2 and names[0].startswith("01_back_double_biceps_") and names[1].startswith("02_other_")
     assert (out / "contact_sheet.jpg").is_file()
+
     report = json.loads((out / "report.json").read_text())
-    assert report["stats"]["unique_poses"] == 3 and report["stats"]["scene_cuts"] == 1
-    assert "3 poses saved" in capsys.readouterr().out
+    assert report["stats"]["photos"] == 2 and report["stats"]["scene_cuts"] == 1
+    assert report["stats"]["holds_rejected_as_relaxed"] == 1
+    assert len(report["missing_poses"]) == 5
+    rejected = [h for h in report["holds"] if h["label"] is None]
+    assert len(rejected) == 1 and rejected[0]["arm_raise"] < 0.15   # the relaxed stance, with the reason
+
+    printed = capsys.readouterr().out
+    assert "2 photos saved" in printed and "Classic poses not found" in printed
 
 
 def test_cli_reports_errors(video, tmp_path, capsys):

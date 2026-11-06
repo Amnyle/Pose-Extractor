@@ -7,6 +7,8 @@ from typing import Optional
 
 import numpy as np
 
+from .classic import DEFAULT_ARM_RAISE_MIN, ArmFeatures
+
 
 @dataclass
 class Config:
@@ -20,9 +22,12 @@ class Config:
     motion_thresh: float = 0.5       # below this speed the athlete counts as "still"
     min_hold: float = 0.8            # a pose must be held at least this long (s)
     drift_thresh: float = 0.3        # max slow drift allowed inside one hold
-    dedupe: bool = True              # merge repeated poses into one photo
-    dedupe_thresh: float = 0.25      # poses closer than this are "the same pose"
+    dedupe: bool = True              # one photo per pose name / merge look-alike poses
+    dedupe_thresh: float = 0.25      # "other" poses closer than this are the same pose
     min_visibility: float = 0.5      # keypoints below this confidence are ignored
+    classic: bool = True             # recognise the six classic poses and drop relaxed frames
+    arm_raise_min: float = DEFAULT_ARM_RAISE_MIN  # wrists must be this high above the hips to count as posing
+    keep_other: bool = True          # also keep intentional poses that match none of the six
 
 
 @dataclass
@@ -35,6 +40,9 @@ class Sample:
     completeness: float              # share of key joints that are visible and inside the frame
     sharpness: float                 # Laplacian variance of the person crop
     cut: bool                        # True if a scene cut happened just before this frame
+    features: Optional[ArmFeatures] = None   # arm geometry used by the pose rules
+    label: Optional[str] = None      # pose name, "other", or None for relaxed / unknown
+    strength: float = 0.0            # how fully the pose is expressed (peak-frame selection)
 
 
 @dataclass
@@ -43,6 +51,7 @@ class Hold:
 
     start: int
     end: int
+    label: Optional[str] = None
 
 
 @dataclass
@@ -54,6 +63,7 @@ class ExtractedPose:
     hold_start: float
     hold_end: float
     score: float
+    label: str = "other"
     appearances: int = 1                                  # how many holds were merged into this pose
     times: list[float] = field(default_factory=list)      # start time of each merged hold
     path: Optional[str] = None                            # relative path of the saved image

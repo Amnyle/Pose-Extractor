@@ -57,6 +57,20 @@ def test_missing_pose_breaks_a_hold():
     assert not any(3.3 <= s <= 4.0 for s, _ in spans)  # the part after (0.3 s) is too short
 
 
+def test_split_by_label_cuts_holds_where_the_label_changes_and_smooths_flicker():
+    from pose_extractor.models import Hold
+    from pose_extractor.holds import split_by_label
+
+    times = [i / FPS for i in range(40)]
+    labels = [None] * 12 + ["a"] * 10 + ["b"] * 18
+    labels[16] = None  # one-sample flicker inside the "a" run
+    pieces = split_by_label([Hold(0, 39)], labels, times, min_duration=0.8)
+    assert [(p.start, p.end, p.label) for p in pieces] == [(0, 11, None), (12, 21, "a"), (22, 39, "b")]
+
+    short = split_by_label([Hold(0, 39)], ["a"] * 5 + ["b"] * 35, times, min_duration=0.8)
+    assert [(p.label) for p in short] == ["b"]  # the 0.4 s run of "a" is dropped
+
+
 def test_slow_drift_is_split_even_though_frame_to_frame_speed_is_low():
     # A -> B spread over 6 s: never fast enough to count as motion
     rel = [(1 - a) * POSE_A + a * POSE_B for a in np.linspace(0, 1, 60)]

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Tool output (default folder is poses_out/)
+poses_out/
+results/
+
+# Pose models and videos
+*.task
+*.mp4
+*.mov
+*.avi
+*.mkv
