@@ -1,0 +1,106 @@
+"""Write the photos, a contact sheet and a JSON report."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict
+from pathlib import Path
+from typing import Sequence
+
+import cv2
+import numpy as np
+
+from .models import Config, ExtractedPose, Hold, Sample
+from .video import VideoInfo, iter_frames_at
+
+
+def save_results(
+    video_path: Path | str,
+    out_dir: Path | str,
+    results: Sequence[ExtractedPose],
+    jpg_quality: int = 95,
+) -> None:
+    """Pass 2: re-read the video and save each chosen frame at full resolution."""
+    out = Path(out_dir)
+    poses_dir = out / "poses"
+    poses_dir.mkdir(parents=True, exist_ok=True)
+
+    wanted: dict[int, Path] = {}
+    for k, result in enumerate(results, 1):
+        name = f"pose_{k:02d}_{result.time:07.2f}s.jpg"
+        result.path = f"poses/{name}"
+        wanted[result.frame_index] = poses_dir / name
+
+    for idx, frame in iter_frames_at(video_path, set(wanted)):
+        if not cv2.imwrite(str(wanted[idx]), frame, [cv2.IMWRITE_JPEG_QUALITY, jpg_quality]):
+            raise IOError(f"Could not write {wanted[idx]}")
+
+    missing = [str(p) for p in wanted.values() if not p.is_file()]
+    if missing:
+        raise RuntimeError(f"Some frames could not be read back from the video: {missing}")
+
+
+def make_contact_sheet(out_dir: Path | str, results: Sequence[ExtractedPose], thumb_h: int = 320, cols: int = 4):
+    """One image with every extracted pose, for a quick visual check. Returns its path or None."""
+    out = Path(out_dir)
+    tiles = []
+    for k, result in enumerate(results, 1):
+        img = cv2.imread(str(out / result.path)) if result.path else None
+        if img is None:
+            continue
+        w = max(1, int(img.shape[1] * thumb_h / img.shape[0]))
+        tile = cv2.resize(img, (w, thumb_h), interpolation=cv2.INTER_AREA)
+        label = f"#{k}  {result.time:.1f}s" + (f"  x{result.appearances}" if result.appearances > 1 else "")
+        cv2.rectangle(tile, (0, 0), (w, 26), (0, 0, 0), -1)
+        cv2.putText(tile, label, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        tiles.append(tile)
+    if not tiles:
+        return None
+
+    cell_w = max(t.shape[1] for t in tiles)
+    rows = []
+    for i in range(0, len(tiles), cols):
+        row = [
+            cv2.copyMakeBorder(t, 0, 0, 0, cell_w - t.shape[1], cv2.BORDER_CONSTANT, value=(0, 0, 0))
+            for t in tiles[i : i + cols]
+        ]
+        while len(row) < cols:
+            row.append(np.zeros((thumb_h, cell_w, 3), np.uint8))
+        rows.append(np.hstack(row))
+
+    path = out / "contact_sheet.jpg"
+    cv2.imwrite(str(path), np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return path
+
+
+def write_report(
+    out_dir: Path | str,
+    video_path: Path | str,
+    info: VideoInfo,
+    cfg: Config,
+    samples: Sequence[Sample],
+    holds: Sequence[Hold],
+    results: Sequence[ExtractedPose],
+) -> Path:
+    report = {
+        "video": str(video_path),
+        "video_info": {
+            "fps": info.fps,
+            "frames": info.frame_count,
+            "width": info.width,
+            "height": info.height,
+            "duration_s": round(info.duration, 2),
+        },
+        "config": asdict(cfg),
+        "stats": {
+            "frames_analysed": len(samples),
+            "frames_with_usable_pose": sum(s.pose is not None for s in samples),
+            "scene_cuts": sum(s.cut for s in samples),
+            "holds_found": len(holds),
+            "unique_poses": len(results),
+        },
+        "poses": [asdict(r) for r in results],
+    }
+    path = Path(out_dir) / "report.json"
+    path.write_text(json.dumps(report, indent=2))
+    return path
