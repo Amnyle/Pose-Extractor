@@ -51,12 +51,18 @@ TORSO_MIN_VIS = 0.5               # shoulders and hips must be clearly visible
 ARM_MIN_VIS = 0.3                 # wrists and elbows may be partly hidden (hands on hips, behind back)
 
 
+LEGS_LEVEL_MAX = 0.12             # feet closer to the same height than this (in torso lengths) count as level
+
+WAIST_ROWS = (0.15, 0.60)         # heights above the hips, in torso lengths, scanned for the narrowest waist
+
+
 @dataclass(frozen=True)
 class ArmFeatures:
     raise_: float
     elbow_lat: float
     shoulder_w: float
     facing: int
+    legs_dy: float = 0.0          # height difference between the two ankles, in torso lengths (0 = level)
 
 
 def arm_features(kp: np.ndarray, arm_min_vis: float = ARM_MIN_VIS) -> Optional[ArmFeatures]:
@@ -80,7 +86,54 @@ def arm_features(kp: np.ndarray, arm_min_vis: float = ARM_MIN_VIS) -> Optional[A
     raise_ = min((hips[1] - kp[i, 1]) / torso for i in wrists)
     elbow_lat = float(np.mean([abs(kp[i, 0] - shoulders[0]) / torso for i in elbows]))
     dx = (kp[11, 0] - kp[12, 0]) / torso
-    return ArmFeatures(float(raise_), elbow_lat, abs(float(dx)), 1 if dx >= 0 else -1)
+    legs_dy = abs(kp[27, 1] - kp[28, 1]) / torso if min(kp[27, 2], kp[28, 2]) >= arm_min_vis else 0.0
+    return ArmFeatures(float(raise_), elbow_lat, abs(float(dx)), 1 if dx >= 0 else -1, float(legs_dy))
+
+
+def waist_ratio(mask: np.ndarray, kp: np.ndarray) -> Optional[float]:
+    """Width of the narrowest part of the waist, in torso lengths, measured on the person mask.
+
+    `mask` is the person silhouette (H x W, values above 0.5 are the body) in the same pixel
+    space as `kp`. A stomach vacuum makes this number drop. Only meaningful when the arms are
+    away from the waist (abs and thighs). Returns None if the silhouette cannot be read.
+    """
+    kp = np.asarray(kp, dtype=float)
+    shoulders = kp[[11, 12], :2].mean(axis=0)
+    hips = kp[[23, 24], :2].mean(axis=0)
+    torso = float(np.linalg.norm(shoulders - hips))
+    if not np.isfinite(torso) or torso < MIN_TORSO_PX:
+        return None
+    height, width = mask.shape[:2]
+    x = int(round(min(max(hips[0], 0), width - 1)))
+    widths = []
+    for f in np.linspace(WAIST_ROWS[0], WAIST_ROWS[1], 10):
+        y = int(round(hips[1] - f * torso))
+        if not 0 <= y < height:
+            continue
+        row = np.asarray(mask[y]) > 0.5
+        if not row[x]:
+            continue
+        left = np.flatnonzero(~row[:x])
+        right = np.flatnonzero(~row[x + 1 :])
+        l = left[-1] + 1 if left.size else 0
+        r = x + right[0] if right.size else width - 1
+        widths.append((r - l + 1) / torso)
+    return float(min(widths)) if len(widths) >= 5 else None
+
+
+def head_drop(kp: np.ndarray, min_vis: float = ARM_MIN_VIS) -> Optional[float]:
+    """How far the nose sits below the ears, in ear-to-ear distances. Larger = head tilted down.
+
+    This is noisy from one frame, so it is only used to rank the frames of one hold against each
+    other, never against a fixed threshold.
+    """
+    kp = np.asarray(kp, dtype=float)
+    if kp.shape[0] < 9 or min(kp[0, 2], kp[7, 2], kp[8, 2]) < min_vis:
+        return None
+    ear_dist = float(np.linalg.norm(kp[7, :2] - kp[8, :2]))
+    if ear_dist < 4.0:
+        return None
+    return float((kp[0, 1] - kp[[7, 8], 1].mean()) / ear_dist)
 
 
 def classify(features: Optional[ArmFeatures], arm_raise_min: float = DEFAULT_ARM_RAISE_MIN) -> Optional[str]:

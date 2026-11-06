@@ -24,7 +24,13 @@ MODEL_URL = (
 
 class PoseEstimator(Protocol):
     def detect(self, frame_bgr: np.ndarray, timestamp_ms: int) -> Optional[np.ndarray]:
-        """Return a (33, 3) array of x, y (pixels) and visibility, or None if nobody is found."""
+        """Return a (33, 3) array of x, y (pixels) and visibility, or None if nobody is found.
+
+        Optionally, a backend can set a `last_mask` attribute after each call: the person
+        silhouette (H x W, same size as the frame, values above 0.5 are the body), or None.
+        It is used to measure the stomach vacuum in abs and thighs. Without it, that pose is
+        chosen by sharpness and position in the hold only.
+        """
         ...
 
     def close(self) -> None: ...
@@ -75,6 +81,7 @@ class MediaPipeEstimator:
         variant: str = "full",
         min_detection_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
+        segmentation: bool = True,
     ):
         import mediapipe as mp
         from mediapipe.tasks.python import BaseOptions, vision
@@ -87,10 +94,13 @@ class MediaPipeEstimator:
             min_pose_detection_confidence=min_detection_confidence,
             min_pose_presence_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence,
+            output_segmentation_masks=segmentation,
         )
         self._mp = mp
         self._landmarker = vision.PoseLandmarker.create_from_options(options)
         self._last_ts = -1
+        self._segmentation = segmentation
+        self.last_mask: Optional[np.ndarray] = None
 
     def detect(self, frame_bgr: np.ndarray, timestamp_ms: int) -> Optional[np.ndarray]:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -98,6 +108,7 @@ class MediaPipeEstimator:
         ts = max(int(timestamp_ms), self._last_ts + 1)  # MediaPipe needs strictly increasing timestamps
         self._last_ts = ts
         result = self._landmarker.detect_for_video(image, ts)
+        self.last_mask = self._read_mask(result, frame_bgr.shape[:2])
         if not result.pose_landmarks:
             return None
         h, w = frame_bgr.shape[:2]
@@ -108,6 +119,19 @@ class MediaPipeEstimator:
             ],
             dtype=np.float32,
         )
+
+    def _read_mask(self, result, frame_shape) -> Optional[np.ndarray]:
+        """The person silhouette of the first pose as a (H, W) float array, or None."""
+        if not self._segmentation or not getattr(result, "segmentation_masks", None):
+            return None
+        try:
+            mask = np.array(result.segmentation_masks[0].numpy_view(), dtype=np.float32)  # copy: the view is reused
+            mask = np.squeeze(mask)
+            if mask.shape != tuple(frame_shape):
+                mask = cv2.resize(mask, (frame_shape[1], frame_shape[0]), interpolation=cv2.INTER_LINEAR)
+            return mask
+        except Exception:  # a missing mask only disables the vacuum measurement
+            return None
 
     def close(self) -> None:
         self._landmarker.close()

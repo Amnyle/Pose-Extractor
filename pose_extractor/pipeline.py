@@ -7,7 +7,17 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .classic import CLASSIC_POSES, OTHER, arm_features, classify, strength
+from .classic import (
+    ABS_AND_THIGHS,
+    CLASSIC_POSES,
+    FRONT_LAT_SPREAD,
+    OTHER,
+    arm_features,
+    classify,
+    head_drop,
+    strength,
+    waist_ratio,
+)
 from .dedupe import group_holds
 from .estimator import PoseEstimator
 from .geometry import completeness, normalize_pose
@@ -49,6 +59,7 @@ def analyze_video(
                 label = classify(feats, cfg.arm_raise_min)
             else:
                 label = OTHER if pose is not None else None
+            mask = getattr(estimator, "last_mask", None)
             samples.append(
                 Sample(
                     index=idx,
@@ -60,6 +71,9 @@ def analyze_video(
                     features=feats,
                     label=label,
                     strength=strength(feats) if feats is not None else 0.0,
+                    # moment-of-peak cues, measured only where the pose needs them
+                    waist=waist_ratio(mask, kp) if label == ABS_AND_THIGHS and mask is not None else None,
+                    head_drop=head_drop(kp) if label == FRONT_LAT_SPREAD else None,
                 )
             )
         if progress:
@@ -139,9 +153,23 @@ def extract_poses(
                 label=hold.label,
                 appearances=len(members),
                 times=[samples[picks[m][0].start].time for m in sorted(members)],
+                alternates=[(samples[i].index, samples[i].time) for i in _alternates(samples, hold, sample_idx, cfg.alternates)],
             )
         )
     return info, samples, holds, results
+
+
+def _alternates(samples: list[Sample], hold: Hold, best: int, count: int) -> list[int]:
+    """Sample indices spread evenly over the hold, other than the chosen one and with a pose."""
+    if count <= 0:
+        return []
+    spread = np.linspace(hold.start, hold.end, count + 2)[1:-1]
+    chosen: list[int] = []
+    for position in spread:
+        i = int(round(position))
+        if i != best and i not in chosen and samples[i].pose is not None:
+            chosen.append(i)
+    return chosen
 
 
 def missing_poses(results: list[ExtractedPose]) -> list[str]:

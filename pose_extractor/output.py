@@ -25,17 +25,24 @@ def save_results(
     poses_dir = out / "poses"
     poses_dir.mkdir(parents=True, exist_ok=True)
 
-    wanted: dict[int, Path] = {}
+    wanted: dict[int, list[Path]] = {}
     for k, result in enumerate(results, 1):
         name = f"{k:02d}_{result.label}_{result.time:07.2f}s.jpg"
         result.path = f"poses/{name}"
-        wanted[result.frame_index] = poses_dir / name
+        wanted.setdefault(result.frame_index, []).append(poses_dir / name)
+        result.alternate_paths = []
+        for frame_index, t in result.alternates:
+            alt = out / "alternates" / f"{k:02d}_{result.label}" / f"{t:07.2f}s.jpg"
+            alt.parent.mkdir(parents=True, exist_ok=True)
+            result.alternate_paths.append(str(alt.relative_to(out)))
+            wanted.setdefault(frame_index, []).append(alt)
 
     for idx, frame in iter_frames_at(video_path, set(wanted)):
-        if not cv2.imwrite(str(wanted[idx]), frame, [cv2.IMWRITE_JPEG_QUALITY, jpg_quality]):
-            raise IOError(f"Could not write {wanted[idx]}")
+        for target in wanted[idx]:
+            if not cv2.imwrite(str(target), frame, [cv2.IMWRITE_JPEG_QUALITY, jpg_quality]):
+                raise IOError(f"Could not write {target}")
 
-    missing = [str(p) for p in wanted.values() if not p.is_file()]
+    missing = [str(p) for paths in wanted.values() for p in paths if not p.is_file()]
     if missing:
         raise RuntimeError(f"Some frames could not be read back from the video: {missing}")
 

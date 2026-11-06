@@ -38,8 +38,9 @@ On a headless machine, `sudo apt install libgl1` may be needed for OpenCV.
    dropped. This is what removes the standing-around and turning-around frames.
 4. **Holds**: a pose must also be held still (`--min-hold`, default 0.8 s). Camera cuts and slow
    drift end a hold, and a hold is cut wherever the pose name changes.
-5. **Best frame**: inside each hold, pick the frame where the pose is most fully expressed
-   (elbows pushed out, wrists up), is sharp, shows the whole body, and is away from the hold's edges.
+5. **Best frame**: inside each hold, pick the right moment of the pose (see below). By default
+   that is the frame where the pose is most fully expressed (elbows pushed out, wrists up), sharp,
+   showing the whole body, and away from the hold's edges.
 6. **One photo per pose**: if a pose was held several times, only its best take is kept.
    Poses that are clearly intentional but match none of the six are saved as `other` and merged
    when they look alike.
@@ -53,6 +54,20 @@ On a headless machine, `sudo apt install libgl1` may be needed for OpenCV.
 
 Facing camera or not comes from which shoulder is on the right of the image. Face keypoints
 cannot tell front from back, because MediaPipe reports a confident face even from behind.
+
+## The right moment inside a pose
+
+- **Abs and thighs**: the stomach vacuum. MediaPipe also gives the outline of the body; the tool
+  measures the width of the waist on it in every frame of the hold and takes the narrowest one, with
+  both feet level (a foot in front of the other lowers the score). The waist is compared with the
+  other frames of the same hold, so no absolute numbers are needed. If the waist hardly changes
+  (under 2% of the torso length, which is the measurement noise), it is ignored and the frame is
+  chosen by sharpness and position in the hold instead.
+- **Front lat spread**: head straight instead of looking down. The nose is compared with the ears
+  in every frame of the hold and the frames with the head most upright are preferred. This is a
+  preference, not a rule: the body model's face points are noisy.
+- **Alternates**: for every pose, `--alternates N` (default 3) also saves N frames spread over the
+  hold in `alternates/`, so the timing can be corrected by eye. `--alternates 0` turns them off.
 
 ## When a pose is missing or wrong
 
@@ -80,6 +95,11 @@ Other flags: `--no-other` (drop unnamed poses), `--no-dedupe` (keep every take),
   body types may need `--arm-raise-min` or a look at `report.json`.
 - **The peak of a pose is estimated, not seen.** "Most fully expressed" means widest elbows and
   highest wrists, not the moment the muscles are tensed hardest.
+- **The vacuum detector has not seen a real vacuum.** It was checked on synthetic silhouettes and
+  on real frames without a vacuum (two of them gave waist widths 1.8% apart, which is the noise
+  floor). If the abs and thighs photo is still at the wrong moment, look in `alternates/`.
+- **Head position is a weak signal.** In the test frames, looking down and looking straight gave
+  overlapping numbers, so frames are only ranked against each other inside a hold.
 - **Side chest keeps one photo.** If you show both sides, only the best one is kept.
 - **One person.** MediaPipe tracks a single person. Crop other people out of the frame.
 - **Only the six poses are named.** Others (most muscular, side triceps) come out as `other`.
@@ -104,10 +124,10 @@ pose_extractor/
   pipeline.py    analyze_video, extract_poses
   classic.py     the six-pose rules
   video.py       frame sampling, scene cuts, sharpness
-  estimator.py   MediaPipe backend + model download
+  estimator.py   MediaPipe backend (keypoints + body outline) + model download
   geometry.py    pose normalisation and distance
   holds.py       hold detection, splitting by pose name
-  select.py      best frame per hold
+  select.py      best frame per hold (vacuum, head, sharpness)
   dedupe.py      merging look-alike unnamed poses
   output.py      photos, contact sheet, report
 tests/           pytest suite: synthetic video + real keypoints from the calibration session

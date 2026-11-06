@@ -96,3 +96,71 @@ def write_video(path, fps: int = 20) -> None:
     for i in range(int(fps * DURATION)):
         writer.write(render_frame(i / fps))
     writer.release()
+
+
+# ---- abs and thighs with a stomach vacuum -------------------------------------------------------
+
+def mirror(rel: np.ndarray) -> np.ndarray:
+    """Flip left and right: the athlete now faces the camera (left shoulder on the right of the image)."""
+    return rel * np.array([-1.0, 1.0])
+
+
+POSE_D = mirror(_body((-45, -120), (-15, -150), (45, -120), (15, -150)))   # hands behind the head, facing the camera
+
+# the athlete gets into the pose at 1.6 s and holds it until 7.6 s
+ABS_START, ABS_END = 1.6, 7.6
+VACUUM_WINDOWS = [(3.0, 4.0), (5.5, 6.5)]   # waist narrows twice ...
+FOOT_FORWARD_WINDOW = (3.0, 4.0)            # ... but in the first one a foot is in front of the other
+ABS_DURATION = 8.0
+
+
+def abs_pose_at(t: float) -> np.ndarray:
+    if t < ABS_START:
+        return POSE_A
+    rel = POSE_D.copy()
+    if FOOT_FORWARD_WINDOW[0] <= t <= FOOT_FORWARD_WINDOW[1]:
+        rel[12, 1] += 30.0   # right ankle lower in the image = foot closer to the camera
+    return rel
+
+
+def in_vacuum(t: float) -> bool:
+    return any(a <= t <= b for a, b in VACUUM_WINDOWS)
+
+
+def silhouette(t: float, center=(320, 250), shape=(480, 640)) -> np.ndarray:
+    """A person mask whose waist is 0.5 torso lengths wide, or 0.4 during a vacuum."""
+    mask = np.zeros(shape, dtype=np.float32)
+    half = (20 if in_vacuum(t) else 25)
+    mask[int(center[1] - 100): int(center[1]), int(center[0] - half): int(center[0] + half)] = 1.0
+    return mask
+
+
+class AbsEstimator:
+    """Fake pose model for the abs-and-thighs scenario, with a person mask like MediaPipe's."""
+
+    def __init__(self, jitter: float = 0.4, seed: int = 1, with_mask: bool = True):
+        self.rng = np.random.default_rng(seed)
+        self.jitter = jitter
+        self.with_mask = with_mask
+        self.last_mask = None
+
+    def detect(self, frame_bgr, timestamp_ms):
+        t = timestamp_ms / 1000.0
+        self.last_mask = silhouette(t) if self.with_mask else None
+        return to_keypoints(abs_pose_at(t), jitter=self.jitter, rng=self.rng)
+
+    def close(self):
+        pass
+
+
+def write_abs_video(path, fps: int = 20) -> None:
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), fps, (640, 480))
+    assert writer.isOpened(), "OpenCV cannot write MJPG videos here"
+    for i in range(int(fps * ABS_DURATION)):
+        t = i / fps
+        frame = np.zeros((480, 640, 3), np.uint8)
+        kp = to_keypoints(abs_pose_at(t))
+        for a, b in EDGES:
+            cv2.line(frame, tuple(int(v) for v in kp[a, :2]), tuple(int(v) for v in kp[b, :2]), (255, 255, 255), 6)
+        writer.write(frame)
+    writer.release()

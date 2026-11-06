@@ -82,3 +82,51 @@ def test_strength_grows_with_flared_elbows_and_raised_wrists():
     assert strength(ArmFeatures(0.3, 0.9, 0.7, 1)) > strength(base)
     assert strength(ArmFeatures(1.4, 0.6, 0.7, 1)) > strength(base)
     assert strength(ArmFeatures(-1.0, 0.6, 0.7, 1)) == strength(ArmFeatures(0.0, 0.6, 0.7, 1))
+
+
+# ---- stomach vacuum, legs level, head tilt --------------------------------------------------------
+
+from pose_extractor.classic import head_drop, waist_ratio
+
+
+def _mask_with_waist(torso_px: float, waist_px: float, center=(320, 250), shape=(480, 640)):
+    mask = np.zeros(shape, dtype=np.float32)
+    half = waist_px / 2
+    mask[int(center[1] - torso_px): int(center[1]), int(center[0] - half): int(center[0] + half)] = 1.0
+    return mask
+
+
+def test_waist_ratio_measures_the_narrowest_width_in_torso_lengths():
+    from tests.synthetic import POSE_D, to_keypoints
+
+    kp = to_keypoints(POSE_D)   # torso is 100 px
+    assert np.isclose(waist_ratio(_mask_with_waist(100, 50), kp), 0.5, atol=0.02)
+    assert np.isclose(waist_ratio(_mask_with_waist(100, 40), kp), 0.4, atol=0.02)
+    assert waist_ratio(np.zeros((480, 640), np.float32), kp) is None   # nobody in the mask
+
+
+def test_waist_ratio_ignores_neighbouring_blobs_and_uses_the_body_in_the_middle():
+    from tests.synthetic import POSE_D, to_keypoints
+
+    kp = to_keypoints(POSE_D)
+    mask = _mask_with_waist(100, 50)
+    mask[:, 400:600] = 1.0          # something wide next to the athlete (a door, a chair)
+    assert np.isclose(waist_ratio(mask, kp), 0.5, atol=0.02)
+
+
+def test_legs_dy_is_zero_for_level_feet_and_grows_with_one_foot_forward():
+    kp = FRAMES["pose_04"].copy()
+    level = arm_features(kp).legs_dy
+    kp[28, 1] += 100
+    assert arm_features(kp).legs_dy > level + 0.25
+    kp[28, 2] = 0.0                   # ankle hidden: cannot judge, treated as level
+    assert arm_features(kp).legs_dy == 0.0
+
+
+def test_head_drop_is_larger_when_the_nose_sits_lower_relative_to_the_ears():
+    kp = FRAMES["pose_04"].copy()
+    straight = head_drop(kp)
+    kp[0, 1] += 15                    # nose dips towards the chest
+    assert head_drop(kp) > straight
+    kp[0, 2] = 0.0
+    assert head_drop(kp) is None

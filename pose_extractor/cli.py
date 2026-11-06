@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--generic", action="store_true", help="do not look for the six classic poses: keep every held pose, whatever it is")
     g.add_argument("--arm-raise-min", type=float, default=defaults.arm_raise_min, help="how high the wrists must be above the hips, in torso lengths, to count as posing instead of standing relaxed (default: %(default)s)")
     g.add_argument("--no-other", action="store_true", help="drop intentional poses that match none of the six classic ones")
+    g.add_argument("--alternates", type=int, default=defaults.alternates, help="extra frames saved per pose, spread over its hold, so you can pick the timing by eye; 0 turns them off (default: %(default)s)")
 
     g = p.add_argument_group("tuning")
     g.add_argument("--motion-thresh", type=float, default=defaults.motion_thresh, help="speed (torso lengths/s) below which the athlete counts as still (default: %(default)s)")
@@ -88,6 +89,7 @@ def main(
         classic=not args.generic,
         arm_raise_min=args.arm_raise_min,
         keep_other=not args.no_other,
+        alternates=max(0, args.alternates),
     )
 
     factory = estimator_factory or (lambda: MediaPipeEstimator(args.model, args.model_variant))
@@ -129,6 +131,8 @@ def main(
     print(f"{len(results)} photos saved to {Path(args.output) / 'poses'}:")
     for r in results:
         print(f"  {r.time:7.1f}s  {r.label}" + (f"  (seen {r.appearances}x)" if r.appearances > 1 else ""))
+    if any(r.alternates for r in results):
+        print(f"Other moments of each pose: {Path(args.output) / 'alternates'}")
     if missing:
         print(f"Classic poses not found: {', '.join(missing)}")
         print("  See the 'holds' list in report.json to find out why a hold was rejected.")

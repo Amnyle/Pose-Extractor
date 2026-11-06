@@ -28,6 +28,7 @@ class Config:
     classic: bool = True             # recognise the six classic poses and drop relaxed frames
     arm_raise_min: float = DEFAULT_ARM_RAISE_MIN  # wrists must be this high above the hips to count as posing
     keep_other: bool = True          # also keep intentional poses that match none of the six
+    alternates: int = 3              # extra frames saved per pose, spread over its hold, to choose the timing by eye
 
 
 @dataclass
@@ -43,6 +44,8 @@ class Sample:
     features: Optional[ArmFeatures] = None   # arm geometry used by the pose rules
     label: Optional[str] = None      # pose name, "other", or None for relaxed / unknown
     strength: float = 0.0            # how fully the pose is expressed (peak-frame selection)
+    waist: Optional[float] = None    # narrowest waist width in torso lengths (abs and thighs only)
+    head_drop: Optional[float] = None  # nose below ears, in ear distances (front lat spread only)
 
 
 @dataclass
@@ -67,3 +70,5 @@ class ExtractedPose:
     appearances: int = 1                                  # how many holds were merged into this pose
     times: list[float] = field(default_factory=list)      # start time of each merged hold
     path: Optional[str] = None                            # relative path of the saved image
+    alternates: list[tuple[int, float]] = field(default_factory=list)  # (frame_index, time) of extra frames
+    alternate_paths: list[str] = field(default_factory=list)

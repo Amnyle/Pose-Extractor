@@ -126,3 +126,46 @@ def test_ensure_model_uses_explicit_path_and_cache(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError):
         ensure_model(None, "giant")
+
+
+# ---- abs and thighs: stomach vacuum measured from the person mask -------------------------------
+
+from tests.synthetic import ABS_END, ABS_START, VACUUM_WINDOWS, AbsEstimator, write_abs_video
+
+
+@pytest.fixture(scope="module")
+def abs_video(tmp_path_factory):
+    path = tmp_path_factory.mktemp("abs") / "abs.avi"
+    write_abs_video(path, fps=20)
+    return path
+
+
+def test_abs_and_thighs_is_taken_at_the_vacuum_with_level_feet(abs_video):
+    _, samples, holds, results = extract_poses(abs_video, AbsEstimator(), Config(sample_fps=10))
+    assert [r.label for r in results] == ["abs_and_thighs"]
+    start, end = VACUUM_WINDOWS[1]          # the second vacuum: the first one has a foot forward
+    assert start <= results[0].time <= end
+    assert any(s.waist is not None for s in samples)
+
+
+def test_abs_and_thighs_without_a_mask_still_works_but_cannot_see_the_vacuum(abs_video):
+    _, samples, _, results = extract_poses(abs_video, AbsEstimator(with_mask=False), Config(sample_fps=10))
+    assert [r.label for r in results] == ["abs_and_thighs"]
+    assert all(s.waist is None for s in samples)
+    assert ABS_START <= results[0].time <= ABS_END
+
+
+def test_alternates_are_spread_over_the_hold_and_saved(abs_video, tmp_path):
+    _, _, _, results = extract_poses(abs_video, AbsEstimator(), Config(sample_fps=10, alternates=3))
+    r = results[0]
+    assert len(r.alternates) == 3
+    times = sorted(t for _, t in r.alternates)
+    assert r.hold_start < times[0] and times[-1] < r.hold_end and r.time not in times
+
+    save_results(abs_video, tmp_path, results)
+    saved = sorted((tmp_path / "alternates").glob("*/*.jpg"))
+    assert len(saved) == 3 and all(cv2.imread(str(p)) is not None for p in saved)
+    assert len(r.alternate_paths) == 3
+
+    _, _, _, none = extract_poses(abs_video, AbsEstimator(), Config(sample_fps=10, alternates=0))
+    assert none[0].alternates == []
