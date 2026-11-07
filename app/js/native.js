@@ -93,22 +93,32 @@ const RELEASE_API = 'https://api.github.com/repos/Amnyle/Pose-Extractor/releases
 export const RELEASE_PAGE = 'https://github.com/Amnyle/Pose-Extractor/releases/tag/android-latest';
 
 /**
- * {version} of a newer APK than this app, or null. Never throws. The app never downloads or installs
- * anything itself (that needs a permission Play Protect rightly distrusts): it opens the release page.
+ * {current, latest, available, sameKey} from the android-latest release on GitHub, or null when it
+ * cannot be checked (offline...). Never throws. `sameKey` is false when the new APK is signed with a
+ * throw-away key (the release notes say so): Android then refuses to install it over this app, which
+ * must be uninstalled first. The app never downloads or installs anything itself (that needs a
+ * permission Play Protect rightly distrusts): it opens the release page.
  */
 export async function checkForUpdate() {
   try {
-    const [{ versionCode }, release] = await Promise.all([
+    const [{ versionCode, versionName }, release] = await Promise.all([
       call('appInfo'),
-      fetch(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } }).then((r) => (r.ok ? r.json() : null)),
+      fetch(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
     ]);
     const latest = Number(/\b1\.0\.(\d+)\b/.exec(release?.name ?? '')?.[1]);
-    const apk = release?.assets?.find((a) => a.name.endsWith('.apk'));
-    if (!apk || !latest || latest <= Number(versionCode)) return null;
-    return { version: `1.0.${latest}` };
+    if (!release || !latest) return null;
+    return {
+      current: versionName,
+      latest: `1.0.${latest}`,
+      available: latest > Number(versionCode),
+      sameKey: !/debug key/i.test(release.body ?? ''),
+    };
   } catch {
     return null;
   }
 }
+
+/** This app's version name, e.g. "1.0.5". */
+export const appVersion = () => call('appInfo').then((i) => i.versionName).catch(() => null);
 
 export const openUrl = (url) => call('openUrl', { url });

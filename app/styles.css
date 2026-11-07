@@ -208,6 +208,10 @@ body[data-view="results"] #view-results { display: block; }
 
 .text-btn { border: 0; background: none; color: var(--accent); font-weight: 600; font-size: 14px; cursor: pointer; padding: 4px 0 16px; }
 
+.about { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 13px; margin: 16px 0 0; }
+.about[hidden] { display: none; }
+.about .text-btn { padding: 0; font-size: 13px; }
+
 /* bottom action bar */
 .actionbar {
   position: fixed; left: 0; right: 0; bottom: 0;

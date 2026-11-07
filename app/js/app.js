@@ -3,7 +3,7 @@
 import { CLASSIC_POSES, OTHER } from './classic.js';
 import { PoseEstimator } from './estimator.js';
 import {
-  RELEASE_PAGE, checkForUpdate, followAnalysis, getAnalysis, isNative, markAnalysisSeen,
+  RELEASE_PAGE, appVersion, checkForUpdate, followAnalysis, getAnalysis, isNative, markAnalysisSeen,
   nativeVideo, openUrl, pickVideo, resultToChoices, runAnalysis, saveFrames,
 } from './native.js';
 import { DEFAULT_CONFIG } from './pipeline.js';
@@ -405,11 +405,29 @@ async function saveAll() {
 
 // ---- updates (Android app) --------------------------------------------------------------------
 
-async function offerUpdate() {
+/** Check GitHub for a newer APK. `manual`: also say so when there is none, or the check failed. */
+async function offerUpdate(manual = false) {
+  const button = $('check-updates');
+  button.disabled = true;
+  button.textContent = 'Checking…';
   const update = await checkForUpdate();
-  if (!update) return;
-  $('update-text').textContent = `A new version (${update.version}) is available. Download it from the release page, then open it to install.`;
+  button.disabled = false;
+  button.textContent = 'Check for updates';
+  if (!update) {
+    if (manual) toast('Could not check for updates. Are you online?');
+    return;
+  }
+  $('app-version').textContent = `Version ${update.current}`;
+  if (!update.available) {
+    if (manual) toast(`You have the latest version (${update.current})`);
+    return;
+  }
+  $('update-text').textContent = update.sameKey
+    ? `Version ${update.latest} is available (you have ${update.current}). Download it, then open it to install.`
+    : `Version ${update.latest} is available (you have ${update.current}). To install it, first uninstall Poses `
+      + '(this version is signed differently, so Android cannot install it over the old one), then download and install it.';
   $('update').hidden = false;
+  window.scrollTo(0, 0);
   $('update-install').onclick = () => openUrl(RELEASE_PAGE);
   $('update-later').onclick = () => { $('update').hidden = true; };
 }
@@ -497,6 +515,9 @@ window.addEventListener('popstate', () => {
 renderPoseGrid();
 renderSpeed();
 if (native) {
+  $('about').hidden = false;
+  appVersion().then((v) => { if (v) $('app-version').textContent = `Version ${v}`; });
+  $('check-updates').addEventListener('click', () => offerUpdate(true));
   resumeNative();
   offerUpdate();
 }
