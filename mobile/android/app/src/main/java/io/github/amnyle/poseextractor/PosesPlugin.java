@@ -138,26 +138,31 @@ public class PosesPlugin extends Plugin {
 
     /**
      * The frame at `time` seconds (upright), as JPEG, scaled to `maxSide` (0 = full size).
-     * Android's frame reader sometimes finds no frame at an exact time (seen on Pixel videos), so:
-     * the reader at that time, then a millisecond either side, then our own decoder (the one the
-     * analysis used, so the frame exists), and only then the nearest key frame.
+     * Our own decoder first: it is the one the analysis used, so the frame is always there (Android's
+     * MediaMetadataRetriever sometimes finds no frame at an exact time, and can be very slow when it
+     * does not). The retriever is the fallback.
      */
     private byte[] frameJpeg(MediaMetadataRetriever r, Uri uri, double time, int maxSide, int quality) throws Exception {
         long us = Math.round(time * 1e6);
         Bitmap frame = null;
-        for (long d : new long[] {0, 1000, -1000}) {
+        try {
+            frame = VideoFrameReader.frameAt(getContext(), uri, us, maxSide);
+        } catch (Exception e) {
+            android.util.Log.w("Poses", "decoder could not read the frame, trying the retriever", e);
+        }
+        if (frame == null) {
             try {
-                frame = maxSide > 0 && Build.VERSION.SDK_INT >= 27
-                    ? r.getScaledFrameAtTime(us + d, MediaMetadataRetriever.OPTION_CLOSEST, maxSide, maxSide)
-                    : r.getFrameAtTime(us + d, MediaMetadataRetriever.OPTION_CLOSEST);
+                frame = r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST);
             } catch (RuntimeException ignored) {
                 frame = null;
             }
-            if (frame != null) break;
         }
-        if (frame == null) frame = VideoFrameReader.frameAt(getContext(), uri, us, maxSide);
         if (frame == null) frame = r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
         if (frame == null) throw new IOException("no frame at " + time + " s");
+        return toJpeg(frame, maxSide, quality);
+    }
+
+    private static byte[] toJpeg(Bitmap frame, int maxSide, int quality) {
         Bitmap out = frame;
         int longest = Math.max(frame.getWidth(), frame.getHeight());
         if (maxSide > 0 && longest > maxSide) {
@@ -171,13 +176,52 @@ public class PosesPlugin extends Plugin {
         return bytes.toByteArray();
     }
 
+    /** The JPEG the analysis stored for sample `index`, if it belongs to this video and is big enough. */
+    private byte[] storedFrame(String uri, int index, int maxSide) {
+        if (index < 0 || maxSide <= 0 || !uri.equals(AnalysisService.STATE.uri) && !uri.equals(storedUri())) return null;
+        File f = AnalysisService.frameFile(getContext(), index);
+        if (!f.isFile()) return null;
+        try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(f.toPath());
+            Bitmap b = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (b == null) return null;
+            if (Math.max(b.getWidth(), b.getHeight()) <= maxSide) { b.recycle(); return bytes; }
+            return toJpeg(b, maxSide, 88);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** The video of the stored analysis (also after the app was closed and reopened). */
+    private String storedUri() {
+        File f = AnalysisService.resultFile(getContext());
+        if (!f.isFile()) return "";
+        try (InputStream in = new FileInputStream(f)) {
+            // the uri is near the start of the file: no need to parse all the samples
+            byte[] head = new byte[4096];
+            int n = in.read(head);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"uri\":\"([^\"]*)\"").matcher(new String(head, 0, Math.max(0, n), StandardCharsets.UTF_8));
+            return m.find() ? m.group(1).replace("\\/", "/") : "";
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
     @PluginMethod
     public void frame(PluginCall call) {
         String uri = call.getString("uri");
         double time = call.getDouble("time", 0.0);
         int maxSide = call.getInt("maxSide", 720);
         int quality = call.getInt("quality", 85);
+        int index = call.getInt("index", -1);
         getBridge().execute(() -> {
+            byte[] stored = storedFrame(uri, index, maxSide);
+            if (stored != null) {
+                JSObject o = new JSObject();
+                o.put("data", Base64.encodeToString(stored, Base64.NO_WRAP));
+                call.resolve(o);
+                return;
+            }
             MediaMetadataRetriever r = new MediaMetadataRetriever();
             try {
                 r.setDataSource(getContext(), Uri.parse(uri));

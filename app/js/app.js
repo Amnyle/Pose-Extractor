@@ -298,13 +298,17 @@ async function showResults(selected, choices) {
   for (const url of state.thumbs) URL.revokeObjectURL(url);
   state.thumbs = [];
   const results = [];
+  const count = selected.reduce((n, p) => n + choices[p].choices.length, 0);
+  let made = 0;
   for (const pose of selected) {
     const c = choices[pose];
     const items = [];
     for (const ch of c.choices) {
+      made++;
+      $('status').textContent = `Preparing the photos (${made} of ${count})…`;
       let blob;
       try {
-        blob = await state.video.grab(ch.time, 720, 0.85);
+        blob = await withTimeout(state.video.grab(ch.time, 720, 0.85, ch.i), 20000);
       } catch (err) {
         console.warn(`no picture at ${ch.time} s, choice skipped`, err);   // one bad frame must not lose the rest
         continue;
@@ -327,6 +331,15 @@ async function showResults(selected, choices) {
   document.body.dataset.view = 'results';
   history.replaceState({ view: 'results' }, '');
   window.scrollTo(0, 0);
+}
+
+/** Rejects if `promise` takes longer than `ms`: one stuck frame must not freeze the app. */
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), ms); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 function showSetup() {

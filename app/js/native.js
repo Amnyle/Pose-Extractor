@@ -24,9 +24,10 @@ export function nativeVideo(info) {
     duration: info.duration,
     width: info.width,
     height: info.height,
-    async grab(time, maxSide = Infinity, quality = 0.95) {
+    /** `index`: the sample index of an analysed frame, whose small JPEG the analysis kept (instant). */
+    async grab(time, maxSide = Infinity, quality = 0.95, index = -1) {
       const { data } = await call('frame', {
-        uri: info.uri, time, maxSide: Number.isFinite(maxSide) ? maxSide : 0, quality: Math.round(quality * 100),
+        uri: info.uri, time, index, maxSide: Number.isFinite(maxSide) ? maxSide : 0, quality: Math.round(quality * 100),
       });
       return base64ToBlob(data);
     },

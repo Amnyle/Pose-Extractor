@@ -77,6 +77,11 @@ public class AnalysisService extends Service {
 
     static File resultFile(Context c) { return new File(c.getFilesDir(), "analysis.json"); }
 
+    /** Small JPEG of every analysed frame, by sample index: the app's thumbnails, read instantly. */
+    static File frameDir(Context c) { return new File(c.getCacheDir(), "frames"); }
+
+    static File frameFile(Context c, int index) { return new File(frameDir(c), index + ".jpg"); }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_CANCEL.equals(intent.getAction())) {
@@ -108,6 +113,10 @@ public class AnalysisService extends Service {
         STATE.total = 0;
         STATE.stoppedAt = -1;
         resultFile(this).delete();
+        File frames = frameDir(this);
+        File[] old = frames.listFiles();
+        if (old != null) for (File f : old) f.delete();
+        frames.mkdirs();
         worker = new Thread(() -> run(uri, fps, maxSide, stopWhenFound, selected == null ? new String[0] : selected), "pose-analysis");
         worker.start();
         return START_NOT_STICKY;
@@ -155,6 +164,11 @@ public class AnalysisService extends Service {
                     .put("sharpness", sharp).put("cut", cut).put("waist", waist == null ? JSONObject.NULL : waist)
                     .put("kp", kp == null ? JSONObject.NULL : toJson(kp));
                 samples.put(s);
+                try (FileOutputStream jpg = new FileOutputStream(frameFile(this, index))) {
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 88, jpg);
+                } catch (Exception e) {
+                    Log.w(TAG, "thumbnail not stored", e);   // the app falls back to decoding the frame
+                }
                 PoseLogic.Frame frame = new PoseLogic.Frame(t, cut, kp, cfg);
                 frames.add(frame);
                 STATE.done = index + 1;
