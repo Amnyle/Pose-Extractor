@@ -33,7 +33,8 @@ android {
     }
     buildTypes {
         release {
-            if (System.getenv("POSES_KEYSTORE")) signingConfig signingConfigs.release
+            // without your key: the throw-away debug key (fine to install; updates need uninstalling)
+            signingConfig System.getenv("POSES_KEYSTORE") ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

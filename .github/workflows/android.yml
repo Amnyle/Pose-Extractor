@@ -61,8 +61,8 @@ jobs:
             echo "apk=app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
             echo "signed=your key" >> "$GITHUB_OUTPUT"
           else
-            echo "task=assembleDebug" >> "$GITHUB_OUTPUT"
-            echo "apk=app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
+            echo "task=assembleRelease" >> "$GITHUB_OUTPUT"
+            echo "apk=app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
             echo "signed=a debug key (uninstall the previous version before installing)" >> "$GITHUB_OUTPUT"
           fi
 
