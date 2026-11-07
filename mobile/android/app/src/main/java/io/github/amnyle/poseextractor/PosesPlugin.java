@@ -136,10 +136,28 @@ public class PosesPlugin extends Plugin {
         return "video";
     }
 
-    /** The frame at `time` seconds (upright), as JPEG, scaled to `maxSide` (0 = full size). */
-    private byte[] frameJpeg(MediaMetadataRetriever r, double time, int maxSide, int quality) throws IOException {
-        Bitmap frame = r.getFrameAtTime(Math.round(time * 1e6), MediaMetadataRetriever.OPTION_CLOSEST);
-        if (frame == null) throw new IOException("frame not found at " + time + " s");
+    /**
+     * The frame at `time` seconds (upright), as JPEG, scaled to `maxSide` (0 = full size).
+     * Android's frame reader sometimes finds no frame at an exact time (seen on Pixel videos), so:
+     * the reader at that time, then a millisecond either side, then our own decoder (the one the
+     * analysis used, so the frame exists), and only then the nearest key frame.
+     */
+    private byte[] frameJpeg(MediaMetadataRetriever r, Uri uri, double time, int maxSide, int quality) throws Exception {
+        long us = Math.round(time * 1e6);
+        Bitmap frame = null;
+        for (long d : new long[] {0, 1000, -1000}) {
+            try {
+                frame = maxSide > 0 && Build.VERSION.SDK_INT >= 27
+                    ? r.getScaledFrameAtTime(us + d, MediaMetadataRetriever.OPTION_CLOSEST, maxSide, maxSide)
+                    : r.getFrameAtTime(us + d, MediaMetadataRetriever.OPTION_CLOSEST);
+            } catch (RuntimeException ignored) {
+                frame = null;
+            }
+            if (frame != null) break;
+        }
+        if (frame == null) frame = VideoFrameReader.frameAt(getContext(), uri, us, maxSide);
+        if (frame == null) frame = r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+        if (frame == null) throw new IOException("no frame at " + time + " s");
         Bitmap out = frame;
         int longest = Math.max(frame.getWidth(), frame.getHeight());
         if (maxSide > 0 && longest > maxSide) {
@@ -164,7 +182,7 @@ public class PosesPlugin extends Plugin {
             try {
                 r.setDataSource(getContext(), Uri.parse(uri));
                 JSObject o = new JSObject();
-                o.put("data", Base64.encodeToString(frameJpeg(r, time, maxSide, quality), Base64.NO_WRAP));
+                o.put("data", Base64.encodeToString(frameJpeg(r, Uri.parse(uri), time, maxSide, quality), Base64.NO_WRAP));
                 call.resolve(o);
             } catch (Exception e) {
                 call.reject("Could not read the frame: " + e.getMessage());
@@ -291,15 +309,24 @@ public class PosesPlugin extends Plugin {
             MediaMetadataRetriever r = new MediaMetadataRetriever();
             try {
                 r.setDataSource(getContext(), Uri.parse(uri));
+                int saved = 0;
+                String lastError = null;
                 for (int k = 0; k < items.length(); k++) {
                     JSONObject item = items.getJSONObject(k);
-                    byte[] jpeg = frameJpeg(r, item.getDouble("time"), 0, 95);
-                    String name = item.getString("fileName");
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) saveMediaStore(jpeg, name);
-                    else saveLegacy(jpeg, name);
+                    try {
+                        byte[] jpeg = frameJpeg(r, Uri.parse(uri), item.getDouble("time"), 0, 95);
+                        String name = item.getString("fileName");
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) saveMediaStore(jpeg, name);
+                        else saveLegacy(jpeg, name);
+                        saved++;
+                    } catch (Exception e) {
+                        lastError = e.getMessage();
+                    }
                 }
+                if (saved == 0 && lastError != null) throw new IOException(lastError);
                 JSObject o = new JSObject();
-                o.put("saved", items.length());
+                o.put("saved", saved);
+                o.put("failed", items.length() - saved);
                 call.resolve(o);
             } catch (Exception e) {
                 call.reject("Could not save the photos: " + e.getMessage());

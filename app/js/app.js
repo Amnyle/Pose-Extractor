@@ -302,10 +302,20 @@ async function showResults(selected, choices) {
     const c = choices[pose];
     const items = [];
     for (const ch of c.choices) {
-      const blob = await state.video.grab(ch.time, 720, 0.85);
+      let blob;
+      try {
+        blob = await state.video.grab(ch.time, 720, 0.85);
+      } catch (err) {
+        console.warn(`no picture at ${ch.time} s, choice skipped`, err);   // one bad frame must not lose the rest
+        continue;
+      }
       const url = URL.createObjectURL(blob);
       state.thumbs.push(url);
       items.push({ time: ch.time, thumb: url });
+    }
+    if (!items.length && c.choices.length) {
+      results.push({ pose, status: 'missing', unsure: true, choices: [], picked: -1 });
+      continue;
     }
     // a pose that was recognised starts with the tool's pick; a guess starts with nothing picked
     results.push({ pose, status: c.status, unsure: c.unsure, choices: items, picked: c.status === 'found' ? 0 : -1 });
@@ -376,8 +386,8 @@ async function saveAll() {
     const name = (r, c, k) => `${String(k + 1).padStart(2, '0')}_${r.pose}_${c.time.toFixed(2)}s.jpg`;
     if (native) {
       const items = picks.map((r, k) => ({ time: r.choices[r.picked].time, fileName: name(r, r.choices[r.picked], k) }));
-      await saveFrames(state.video, items);
-      toast(`${items.length} photo${items.length > 1 ? 's' : ''} saved to Pictures/Poses`);
+      const { saved, failed } = await saveFrames(state.video, items);
+      toast(`${saved} photo${saved > 1 ? 's' : ''} saved to Pictures/Poses` + (failed ? ` (${failed} could not be read)` : ''));
       return;
     }
     const files = [];

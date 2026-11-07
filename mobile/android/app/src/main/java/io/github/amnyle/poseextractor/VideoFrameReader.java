@@ -29,6 +29,8 @@ final class VideoFrameReader implements Closeable {
     private MediaCodec codec;
     private final int rotation;
     final double duration;
+    // YUV -> RGB: limited or full range, BT.601 or BT.709 (read from the decoder once it knows)
+    private double yScale = 1.164, yOffset = 16, rv = 1.793, gu = 0.213, gv = 0.533, bu = 2.112;
 
     VideoFrameReader(Context context, Uri uri) throws IOException {
         extractor.setDataSource(context, uri, null);
@@ -64,11 +66,51 @@ final class VideoFrameReader implements Closeable {
         }
     }
 
+    private void readColorFormat() {
+        try {
+            MediaFormat out = codec.getOutputFormat();
+            boolean full = out.containsKey(MediaFormat.KEY_COLOR_RANGE)
+                && out.getInteger(MediaFormat.KEY_COLOR_RANGE) == MediaFormat.COLOR_RANGE_FULL;
+            int standard = out.containsKey(MediaFormat.KEY_COLOR_STANDARD) ? out.getInteger(MediaFormat.KEY_COLOR_STANDARD) : 0;
+            int height = out.containsKey(MediaFormat.KEY_HEIGHT) ? out.getInteger(MediaFormat.KEY_HEIGHT) : 1080;
+            boolean bt601 = standard == MediaFormat.COLOR_STANDARD_BT601_NTSC || standard == MediaFormat.COLOR_STANDARD_BT601_PAL
+                || (standard == 0 && Math.min(height, out.containsKey(MediaFormat.KEY_WIDTH) ? out.getInteger(MediaFormat.KEY_WIDTH) : 1920) < 720);
+            yScale = full ? 1.0 : 1.164;
+            yOffset = full ? 0 : 16;
+            double k = full ? 1.0 : 255.0 / 224.0;   // chroma range
+            if (bt601) { rv = 1.402 * k; gu = 0.344 * k; gv = 0.714 * k; bu = 1.772 * k; }
+            else { rv = 1.5748 * k; gu = 0.1873 * k; gv = 0.4681 * k; bu = 1.8556 * k; }
+        } catch (RuntimeException ignored) {
+            // keep the BT.709 limited-range defaults
+        }
+    }
+
+    /**
+     * The frame at `timeUs` (the first one at or after it, as the analysis saw it), upright, scaled
+     * to `maxSide` (0 = full size), as ARGB; null if the video has no frame there.
+     */
+    static android.graphics.Bitmap frameAt(Context context, Uri uri, long timeUs, int maxSide) throws Exception {
+        try (VideoFrameReader reader = new VideoFrameReader(context, uri)) {
+            reader.extractor.seekTo(timeUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            android.graphics.Bitmap[] found = {null};
+            reader.read(1e6, maxSide, timeUs / 1e6, (argb, w, h, t) -> {
+                found[0] = android.graphics.Bitmap.createBitmap(argb, w, h, android.graphics.Bitmap.Config.ARGB_8888);
+                return false;
+            });
+            return found[0];
+        }
+    }
+
     /** Read the whole video, calling `sink` for the frames at 0, 1/fps, 2/fps, ... seconds. */
     void read(double sampleFps, int maxSide, FrameSink sink) throws Exception {
+        read(sampleFps, maxSide, 0, sink);
+    }
+
+    /** Same, for frames from `fromTime` seconds on (the extractor must already be there). */
+    private void read(double sampleFps, int maxSide, double fromTime, FrameSink sink) throws Exception {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         boolean inputDone = false;
-        int nextSample = 0;
+        long nextSample = (long) Math.ceil(fromTime * sampleFps - 1e-9);
         double halfFrame = 0.5 / 30.0;
         long lastPts = -1;
         while (true) {
@@ -87,6 +129,7 @@ final class VideoFrameReader implements Closeable {
                 }
             }
             int out = codec.dequeueOutputBuffer(info, 10_000);
+            if (out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) readColorFormat();
             if (out < 0) continue;
             boolean end = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
             if (info.size > 0) {
@@ -126,7 +169,7 @@ final class VideoFrameReader implements Closeable {
         int cropX = image.getCropRect().left, cropY = image.getCropRect().top;
         boolean swap = rotation == 90 || rotation == 270;
         int uprightW = swap ? srcH : srcW, uprightH = swap ? srcW : srcH;
-        double scale = Math.min(1.0, (double) maxSide / Math.max(uprightW, uprightH));
+        double scale = maxSide <= 0 ? 1.0 : Math.min(1.0, (double) maxSide / Math.max(uprightW, uprightH));
         int w = Math.max(1, (int) Math.round(uprightW * scale)), h = Math.max(1, (int) Math.round(uprightH * scale));
 
         Image.Plane[] planes = image.getPlanes();
@@ -152,8 +195,8 @@ final class VideoFrameReader implements Closeable {
                 int Y = yBuf.get(sy * yRow + sx * yPix) & 255;
                 int U = (uBuf.get((sy / 2) * uRow + (sx / 2) * uPix) & 255) - 128;
                 int V = (vBuf.get((sy / 2) * vRow + (sx / 2) * vPix) & 255) - 128;
-                double yy = 1.164 * Math.max(0, Y - 16);
-                int r = clamp(yy + 1.596 * V), g = clamp(yy - 0.392 * U - 0.813 * V), b = clamp(yy + 2.017 * U);
+                double yy = yScale * Math.max(0, Y - yOffset);
+                int r = clamp(yy + rv * V), g = clamp(yy - gu * U - gv * V), b = clamp(yy + bu * U);
                 argb[oy * w + ox] = 0xff000000 | (r << 16) | (g << 8) | b;
             }
         }

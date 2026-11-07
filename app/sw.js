@@ -1,6 +1,6 @@
 // Offline support: the app shell is cached at install, the pose model and MediaPipe runtime the
 // first time they are used. Bump VERSION when the app changes so phones pick up the new files.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/app.js', 'js/classic.js', 'js/estimator.js', 'js/geometry.js', 'js/holds.js', 'js/native.js',
