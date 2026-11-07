@@ -11,6 +11,8 @@ android {
         versionCode Integer.parseInt(System.getenv("APP_VERSION_CODE") ?: "1")
         versionName System.getenv("APP_VERSION_NAME") ?: "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // phones only: keeps the APK small (MediaPipe ships native code per processor type)
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -38,6 +40,11 @@ android {
     }
 }
 
+android {
+    // MediaPipe reads the pose model straight from the APK: it must not be compressed
+    androidResources { noCompress 'task' }
+}
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
@@ -50,6 +57,7 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    implementation "com.google.mediapipe:tasks-vision:0.10.35"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

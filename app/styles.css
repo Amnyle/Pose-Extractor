@@ -108,6 +108,19 @@ body[data-view="results"] #view-results { display: block; }
   font-size: 13px; font-weight: 700;
 }
 
+/* update banner (Android app) */
+.update {
+  max-width: 608px; margin: 4px auto 8px; padding: 12px 14px;
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 14px;
+  display: grid; gap: 8px;
+}
+@media (max-width: 640px) { .update { margin: 4px 16px 8px; } }
+.update[hidden] { display: none; }
+.update p { margin: 0; font-weight: 600; font-size: 14px; }
+.update-actions { display: flex; justify-content: flex-end; align-items: center; gap: 16px; }
+.update-actions .text-btn { padding: 0; }
+.primary.small { min-height: 38px; font-size: 14px; border-radius: 10px; padding: 0 16px; }
+
 /* video picker */
 .dropzone {
   display: block;

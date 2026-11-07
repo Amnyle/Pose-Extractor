@@ -28,6 +28,14 @@
     </div>
   </header>
 
+  <aside class="update" id="update" hidden>
+    <p id="update-text"></p>
+    <div class="update-actions">
+      <button class="text-btn" id="update-later" type="button">Later</button>
+      <button class="primary small" id="update-install" type="button">Install</button>
+    </div>
+  </aside>
+
   <!-- 1. Setup ------------------------------------------------------------------------------- -->
   <main class="view" id="view-setup">
     <section class="card">
@@ -98,7 +106,7 @@
       </div>
       <p class="status" id="status">Starting…</p>
       <div class="seen" id="seen"></div>
-      <p class="hint">Keep the app open until it finishes.</p>
+      <p class="hint" id="analysing-hint">Keep the app open until it finishes.</p>
     </section>
     <div class="actionbar">
       <button class="secondary" id="cancel" type="button">Cancel</button>

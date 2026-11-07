@@ -1,8 +1,18 @@
 # Android app
 
-The phone app in `../app`, packaged as a real Android app with [Capacitor](https://capacitorjs.com):
-same screens and pose logic, plus native saving of the photos to the gallery (`Pictures/Poses`)
-and keeping the screen on during an analysis (`GallerySaverPlugin.java`).
+The phone app in `../app`, packaged as a real Android app with [Capacitor](https://capacitorjs.com).
+The screens and the pose logic are the web app's; the video work is native, for speed and so it
+goes on with the app closed:
+
+- `AnalysisService.java`: a background service (with a progress notification) decodes the video
+  once front to back (`VideoFrameReader.java`), runs MediaPipe's native pose model on about 6 frames
+  per second, and stores what the app's logic needs per frame. "Stop when all poses are found" is
+  decided there too (`logic/PoseLogic.java`, a port of the app's hold logic, tested against the same
+  reference data as the app: `src/test`, data from `mobile/scripts/make-java-golden.mjs`).
+- `PosesPlugin.java`: what the web app calls (`app/js/native.js`): pick a video, read frames,
+  start / follow the analysis, save photos to the gallery (`Pictures/Poses`), and in-app updates.
+
+When the app opens it checks the android-latest release on GitHub and offers newer versions.
 
 ## Install on your phone
 

@@ -75,7 +75,7 @@ jobs:
           POSES_KEY_PASSWORD: ${{ secrets.POSES_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon ${{ steps.key.outputs.task }}
+          ./gradlew --no-daemon testDebugUnitTest ${{ steps.key.outputs.task }}
           cp ${{ steps.key.outputs.apk }} "$RUNNER_TEMP/Poses.apk"
 
       - uses: actions/upload-artifact@v4

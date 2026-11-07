@@ -2,6 +2,10 @@
 
 import { CLASSIC_POSES, OTHER } from './classic.js';
 import { PoseEstimator } from './estimator.js';
+import {
+  RELEASE_PAGE, checkForUpdate, followAnalysis, getAnalysis, installUpdate, isNative, markAnalysisSeen,
+  nativeVideo, openUrl, pickVideo, resultToChoices, runAnalysis, saveFrames,
+} from './native.js';
 import { DEFAULT_CONFIG } from './pipeline.js';
 import { PICTOGRAMS } from './pictograms.js';
 import { analyse } from './runner.js';
@@ -25,9 +29,8 @@ const BONES = [[1, 2], [1, 3], [3, 5], [2, 4], [4, 6], [1, 7], [2, 8], [7, 8], [
 
 const $ = (id) => document.getElementById(id);
 
-// Inside the Android app (Capacitor), a few things go through native code instead of the browser.
-const native = window.Capacitor?.isNativePlatform?.() ?? false;
-const callNative = (method, options) => window.Capacitor.nativePromise('GallerySaver', method, options);
+// Inside the Android app, the video work runs natively and in the background (native.js).
+const native = isNative;
 const store = {
   get(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
@@ -76,78 +79,185 @@ function updateStart() {
     : 'Choose at least one pose';
 }
 
+/** A video in the browser, with the same shape as nativeVideo() in native.js. */
+function webVideo(element, name) {
+  return {
+    native: false,
+    element,
+    name,
+    duration: element.duration,
+    width: element.videoWidth,
+    height: element.videoHeight,
+    grab: (time, maxSide = Infinity, quality = 0.95) => grabFrame(element, time, maxSide, quality),
+  };
+}
+
 async function chooseFile(file) {
   if (!file) return;
   $('video-error').hidden = true;
   try {
-    const video = await loadVideo(file);
-    if (state.video) URL.revokeObjectURL(state.video.src);
-    state.file = file;
-    state.video = video;
-    const thumb = await grabFrame(video, Math.min(1, video.duration / 2), 240, 0.8);
-    $('video-thumb').src = URL.createObjectURL(thumb);
-    $('video-name').textContent = file.name;
-    $('video-info').textContent = `${formatDuration(video.duration)} · ${video.videoWidth}×${video.videoHeight}`;
-    $('dropzone').classList.add('has-video');
+    const element = await loadVideo(file);
+    if (state.video?.element) URL.revokeObjectURL(state.video.element.src);
+    await useVideo(webVideo(element, file.name));
   } catch (err) {
-    $('video-error').textContent = err.message || 'Could not open this video.';
-    $('video-error').hidden = false;
+    showError(err.message || 'Could not open this video.');
   }
   updateStart();
+}
+
+async function chooseNativeVideo() {
+  $('video-error').hidden = true;
+  try {
+    const video = await pickVideo();
+    if (video) await useVideo(video);
+  } catch (err) {
+    showError(err.message || 'Could not open this video.');
+  }
+  updateStart();
+}
+
+async function useVideo(video) {
+  state.video = video;
+  const thumb = await video.grab(Math.min(1, video.duration / 2), 240, 0.8);
+  $('video-thumb').src = URL.createObjectURL(thumb);
+  $('video-name').textContent = video.name;
+  $('video-info').textContent = `${formatDuration(video.duration)} · ${video.width}×${video.height}`;
+  $('dropzone').classList.add('has-video');
+}
+
+function showError(message) {
+  $('video-error').textContent = message;
+  $('video-error').hidden = false;
 }
 
 const formatDuration = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 
 // ---- analysing view ---------------------------------------------------------------------------
 
-async function start() {
+function showAnalysing() {
   document.body.dataset.view = 'analysing';
   window.scrollTo(0, 0);
-  const selected = CLASSIC_POSES.filter((p) => state.selected.has(p));
-  const seen = new Set();
+  state.seen = new Set();
   $('seen').innerHTML = '';
   $('bar').style.width = '0%';
   $('live-label').textContent = '';
-  state.abort = new AbortController();
-  const wakeLock = native
-    ? await callNative('keepAwake', { on: true }).then(() => ({ release: () => callNative('keepAwake', { on: false }) })).catch(() => null)
-    : await navigator.wakeLock?.request('screen').catch(() => null);
+  $('status').textContent = 'Starting…';
+  $('analysing-hint').textContent = native
+    ? 'You can leave the app or lock the phone: it carries on, and a notification tells you when it is done.'
+    : 'Keep the app open until it finishes.';
   history.pushState({ view: 'analysing' }, '');
+}
+
+function showProgress({ done, total, time, label }) {
+  const pct = Math.round((100 * done) / Math.max(1, total));
+  $('bar').style.width = `${pct}%`;
+  $('progress').setAttribute('aria-valuenow', String(pct));
+  $('status').textContent = `Analysing ${time.toFixed(1)} s of ${state.video.duration.toFixed(1)} s`;
+  $('live-label').textContent = label && label !== OTHER ? fullName(label) : '';
+  if (label && label !== OTHER && !state.seen.has(label)) {
+    state.seen.add(label);
+    $('seen').insertAdjacentHTML('beforeend', `<span class="chip">✓ ${fullName(label)}</span>`);
+  }
+}
+
+async function start() {
+  const selected = CLASSIC_POSES.filter((p) => state.selected.has(p));
+  showAnalysing();
+  state.abort = new AbortController();
+  if (native) {
+    // remembered so the app can pick the analysis up again if Android closes it meanwhile
+    store.set('job', { video: { uri: state.video.uri, name: state.video.name, duration: state.video.duration, width: state.video.width, height: state.video.height }, selected, fps: state.fps });
+    try {
+      const cfg = { ...DEFAULT_CONFIG, sampleFps: state.fps };
+      const result = await runAnalysis(state.video, selected, {
+        cfg, stopWhenFound: state.stopWhenFound, signal: state.abort.signal, onProgress: showNativeProgress,
+      });
+      await showNativeResult(result, selected, cfg);
+    } catch (err) {
+      analysisFailed(err);
+    } finally {
+      state.abort = null;
+    }
+    return;
+  }
+  const wakeLock = await navigator.wakeLock?.request('screen').catch(() => null);
   try {
     state.estimator ??= await (window.__createEstimator?.() ?? PoseEstimator.create((s) => { $('status').textContent = s; }));
     const cfg = { ...DEFAULT_CONFIG, sampleFps: state.fps };
     const preview = $('preview');
-    const { choices, stoppedAt } = await analyse(state.video, state.estimator, selected, {
+    const { choices, stoppedAt } = await analyse(state.video.element, state.estimator, selected, {
       cfg,
       stopWhenFound: state.stopWhenFound,
       signal: state.abort.signal,
-      onProgress: ({ done, total, time, canvas, kp, label }) => {
-        drawPreview(preview, canvas, kp);
-        const pct = Math.round((100 * done) / total);
-        $('bar').style.width = `${pct}%`;
-        $('progress').setAttribute('aria-valuenow', String(pct));
-        $('status').textContent = `Analysing ${time.toFixed(1)} s of ${state.video.duration.toFixed(1)} s`;
-        $('live-label').textContent = label && label !== OTHER ? fullName(label) : '';
-        if (label && label !== OTHER && !seen.has(label)) {
-          seen.add(label);
-          $('seen').insertAdjacentHTML('beforeend', `<span class="chip">✓ ${fullName(label)}</span>`);
-        }
+      onProgress: (p) => {
+        drawPreview(preview, p.canvas, p.kp);
+        showProgress(p);
       },
     });
     $('status').textContent = 'Preparing the photos…';
     state.stoppedAt = stoppedAt;
     await showResults(selected, choices);
   } catch (err) {
-    if (err.name === 'AbortError') {
-      showSetup();
-    } else {
-      console.error(err);
-      showSetup();
-      $('video-error').textContent = `Analysis failed: ${err.message || err}`;
-      $('video-error').hidden = false;
-    }
+    analysisFailed(err);
   } finally {
     wakeLock?.release().catch(() => {});
+    state.abort = null;
+  }
+}
+
+function analysisFailed(err) {
+  showSetup();
+  if (err.name !== 'AbortError') {
+    console.error(err);
+    showError(`Analysis failed: ${err.message || err}`);
+  }
+}
+
+// ---- native analysis (Android app) -------------------------------------------------------------
+
+function showNativeProgress(p) {
+  showProgress(p);
+  if (!p.preview) return;
+  const img = new Image();
+  img.onload = () => {
+    const canvas = $('preview');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const s = p.previewScale || 1;
+    if (p.kp) drawPreview(canvas, canvas, p.kp.map(([x, y, v]) => [x * s, y * s, v]));
+  };
+  img.src = `data:image/jpeg;base64,${p.preview}`;
+}
+
+async function showNativeResult(result, selected, cfg) {
+  $('status').textContent = 'Preparing the photos…';
+  const { choices } = resultToChoices(result, selected, cfg);
+  state.stoppedAt = result.stoppedAt;
+  await showResults(selected, choices);
+  markAnalysisSeen().catch(() => {});
+}
+
+/** When the app opens: pick up an analysis that is still running, or finished while it was closed. */
+async function resumeNative() {
+  const job = store.get('job', null);
+  if (!job) return;
+  const result = await getAnalysis().catch(() => null);
+  if (!result || result.status === 'idle' || result.uri !== job.video.uri) return;
+  if (result.status !== 'running' && (result.seen || result.status !== 'done')) return;
+  state.video = nativeVideo(job.video);
+  state.fps = job.fps;
+  const cfg = { ...DEFAULT_CONFIG, sampleFps: job.fps };
+  showAnalysing();
+  state.abort = new AbortController();
+  try {
+    const done = result.status === 'running'
+      ? await followAnalysis({ onProgress: showNativeProgress, signal: state.abort.signal })
+      : result;
+    await showNativeResult(done, job.selected, cfg);
+  } catch (err) {
+    analysisFailed(err);
+  } finally {
     state.abort = null;
   }
 }
@@ -192,7 +302,7 @@ async function showResults(selected, choices) {
     const c = choices[pose];
     const items = [];
     for (const ch of c.choices) {
-      const blob = await grabFrame(state.video, ch.time, 720, 0.85);
+      const blob = await state.video.grab(ch.time, 720, 0.85);
       const url = URL.createObjectURL(blob);
       state.thumbs.push(url);
       items.push({ time: ch.time, thumb: url });
@@ -216,7 +326,7 @@ function showSetup() {
 }
 
 function renderResults() {
-  const ar = `${state.video.videoWidth} / ${state.video.videoHeight}`;
+  const ar = `${state.video.width} / ${state.video.height}`;
   const found = state.results.filter((r) => r.status === 'found').length;
   const toCheck = state.results.filter((r) => r.status !== 'missing' && r.unsure).length;
   $('summary').textContent = `${found} of ${state.results.length} pose${state.results.length > 1 ? 's' : ''} found`
@@ -263,16 +373,20 @@ async function saveAll() {
   button.disabled = true;
   button.textContent = 'Preparing…';
   try {
+    const name = (r, c, k) => `${String(k + 1).padStart(2, '0')}_${r.pose}_${c.time.toFixed(2)}s.jpg`;
+    if (native) {
+      const items = picks.map((r, k) => ({ time: r.choices[r.picked].time, fileName: name(r, r.choices[r.picked], k) }));
+      await saveFrames(state.video, items);
+      toast(`${items.length} photo${items.length > 1 ? 's' : ''} saved to Pictures/Poses`);
+      return;
+    }
     const files = [];
     for (const [k, r] of picks.entries()) {
       const c = r.choices[r.picked];
-      const blob = await grabFrame(state.video, c.time, Infinity, 0.95);
-      files.push(new File([blob], `${String(k + 1).padStart(2, '0')}_${r.pose}_${c.time.toFixed(2)}s.jpg`, { type: 'image/jpeg' }));
+      const blob = await state.video.grab(c.time, Infinity, 0.95);
+      files.push(new File([blob], name(r, c, k), { type: 'image/jpeg' }));
     }
-    if (native) {
-      for (const f of files) await callNative('save', { fileName: f.name, data: await toBase64(f) });
-      toast(`${files.length} photo${files.length > 1 ? 's' : ''} saved to Pictures/Poses`);
-    } else if (navigator.canShare?.({ files })) {
+    if (navigator.canShare?.({ files })) {
       try {
         await navigator.share({ files, title: 'Poses' });
         toast('Shared');
@@ -289,13 +403,34 @@ async function saveAll() {
   }
 }
 
-function toBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',', 2)[1]);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+// ---- updates (Android app) --------------------------------------------------------------------
+
+async function offerUpdate() {
+  const update = await checkForUpdate();
+  if (!update) return;
+  $('update-text').textContent = `A new version (${update.version}) is available.`;
+  $('update').hidden = false;
+  $('update-install').onclick = async () => {
+    const button = $('update-install');
+    button.disabled = true;
+    try {
+      await installUpdate(update.url, (f) => { button.textContent = `Downloading ${Math.round(f * 100)}%`; });
+      button.textContent = 'Install';
+    } catch (err) {
+      button.textContent = 'Install';
+      if (err.code === 'SIGNATURE') {
+        $('update-text').textContent = 'This version cannot replace the installed one (it is signed differently). '
+          + 'Uninstall Poses, then install it from the download page.';
+        button.textContent = 'Open download page';
+        button.onclick = () => openUrl(RELEASE_PAGE);
+      } else {
+        toast(err.message || 'The update failed');
+      }
+    } finally {
+      button.disabled = false;
+    }
+  };
+  $('update-later').onclick = () => { $('update').hidden = true; };
 }
 
 function downloadAll(files) {
@@ -323,6 +458,13 @@ function toast(message) {
 // ---- wiring -----------------------------------------------------------------------------------
 
 $('file').addEventListener('change', (e) => chooseFile(e.target.files[0]));
+if (native) {
+  // Android's own picker gives the native side lasting access to the video
+  $('dropzone').addEventListener('click', (e) => {
+    e.preventDefault();
+    chooseNativeVideo();
+  });
+}
 $('pose-grid').addEventListener('click', (e) => {
   const b = e.target.closest('[data-pose]');
   if (!b) return;
@@ -373,6 +515,10 @@ window.addEventListener('popstate', () => {
 
 renderPoseGrid();
 renderSpeed();
+if (native) {
+  resumeNative();
+  offerUpdate();
+}
 
 if (!native && 'serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
