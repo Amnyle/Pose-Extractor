@@ -3,7 +3,7 @@
 import { CLASSIC_POSES, OTHER } from './classic.js';
 import { PoseEstimator } from './estimator.js';
 import {
-  RELEASE_PAGE, checkForUpdate, followAnalysis, getAnalysis, installUpdate, isNative, markAnalysisSeen,
+  RELEASE_PAGE, checkForUpdate, followAnalysis, getAnalysis, isNative, markAnalysisSeen,
   nativeVideo, openUrl, pickVideo, resultToChoices, runAnalysis, saveFrames,
 } from './native.js';
 import { DEFAULT_CONFIG } from './pipeline.js';
@@ -408,28 +408,9 @@ async function saveAll() {
 async function offerUpdate() {
   const update = await checkForUpdate();
   if (!update) return;
-  $('update-text').textContent = `A new version (${update.version}) is available.`;
+  $('update-text').textContent = `A new version (${update.version}) is available. Download it from the release page, then open it to install.`;
   $('update').hidden = false;
-  $('update-install').onclick = async () => {
-    const button = $('update-install');
-    button.disabled = true;
-    try {
-      await installUpdate(update.url, (f) => { button.textContent = `Downloading ${Math.round(f * 100)}%`; });
-      button.textContent = 'Install';
-    } catch (err) {
-      button.textContent = 'Install';
-      if (err.code === 'SIGNATURE') {
-        $('update-text').textContent = 'This version cannot replace the installed one (it is signed differently). '
-          + 'Uninstall Poses, then install it from the download page.';
-        button.textContent = 'Open download page';
-        button.onclick = () => openUrl(RELEASE_PAGE);
-      } else {
-        toast(err.message || 'The update failed');
-      }
-    } finally {
-      button.disabled = false;
-    }
-  };
+  $('update-install').onclick = () => openUrl(RELEASE_PAGE);
   $('update-later').onclick = () => { $('update').hidden = true; };
 }
 

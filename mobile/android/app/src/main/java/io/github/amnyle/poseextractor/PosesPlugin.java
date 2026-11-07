@@ -7,7 +7,6 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.Signature;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.media.MediaMetadataRetriever;
@@ -17,12 +16,10 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
-import android.provider.Settings;
 import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
-import androidx.core.content.FileProvider;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -36,15 +33,11 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.InputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
-import java.util.Set;
 import org.json.JSONObject;
 
 /**
@@ -52,7 +45,7 @@ import org.json.JSONObject;
  *   pickVideo, frame             choose a video, read one of its frames as a JPEG
  *   startAnalysis, cancelAnalysis, getAnalysis, clearAnalysis   background analysis (AnalysisService)
  *   saveFrames                   save full-resolution frames into the gallery (Pictures/Poses)
- *   appInfo, installUpdate, openUrl                             in-app updates
+ *   appInfo, openUrl             update check (the download itself happens in the browser)
  * Events: "progress" and "finished" while an analysis runs.
  */
 @CapacitorPlugin(
@@ -369,100 +362,4 @@ public class PosesPlugin extends Plugin {
         call.resolve();
     }
 
-    /**
-     * installUpdate({url}): download the APK, check it is signed like this app, and open Android's
-     * installer. Rejects with code "SIGNATURE" when the keys differ (Android would refuse the update:
-     * the app must be uninstalled first) and "PERMISSION" when installing apps must be allowed first.
-     */
-    @PluginMethod
-    public void installUpdate(PluginCall call) {
-        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
-            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(i);
-            call.reject("Allow Poses to install apps, then tap Install again", "PERMISSION");
-            return;
-        }
-        String url = call.getString("url");
-        getBridge().execute(() -> {
-            try {
-                File dir = new File(getContext().getCacheDir(), "updates");
-                if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot create " + dir);
-                File apk = new File(dir, "Poses.apk");
-                download(url, apk);
-                if (!sameSigner(apk)) {
-                    call.reject("This version is signed with a different key", "SIGNATURE");
-                    return;
-                }
-                Uri content = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
-                Intent i = new Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(content, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(i);
-                call.resolve();
-            } catch (Exception e) {
-                call.reject("The update could not be downloaded: " + e.getMessage());
-            }
-        });
-    }
-
-    private void download(String url, File target) throws IOException {
-        for (int hop = 0; hop < 5; hop++) {   // GitHub redirects release downloads to its file storage
-            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-            c.setInstanceFollowRedirects(false);
-            c.setConnectTimeout(20_000);
-            c.setReadTimeout(60_000);
-            int code = c.getResponseCode();
-            if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) {
-                url = new URL(new URL(url), c.getHeaderField("Location")).toString();
-                c.disconnect();
-                continue;
-            }
-            if (code != 200) throw new IOException("HTTP " + code);
-            File part = new File(target.getPath() + ".part");
-            long total = c.getContentLengthLong(), done = 0, lastEvent = 0;
-            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(part)) {
-                byte[] buf = new byte[64 * 1024];
-                for (int n; (n = in.read(buf)) > 0; ) {
-                    out.write(buf, 0, n);
-                    done += n;
-                    long now = System.currentTimeMillis();
-                    if (total > 0 && now - lastEvent > 300) {
-                        lastEvent = now;
-                        JSObject p = new JSObject();
-                        p.put("fraction", (double) done / total);
-                        notifyListeners("updateProgress", p);
-                    }
-                }
-            } finally {
-                c.disconnect();
-            }
-            if (!part.renameTo(target)) throw new IOException("cannot store the download");
-            return;
-        }
-        throw new IOException("too many redirects");
-    }
-
-    @SuppressWarnings("deprecation")
-    private boolean sameSigner(File apk) throws PackageManager.NameNotFoundException {
-        PackageManager pm = getContext().getPackageManager();
-        int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
-        PackageInfo mine = pm.getPackageInfo(getContext().getPackageName(), flags);
-        PackageInfo theirs = pm.getPackageArchiveInfo(apk.getPath(), flags);
-        if (theirs == null) return false;
-        return signers(mine).equals(signers(theirs));
-    }
-
-    @SuppressWarnings("deprecation")
-    private static Set<String> signers(PackageInfo p) {
-        Signature[] sigs;
-        if (Build.VERSION.SDK_INT >= 28 && p.signingInfo != null) {
-            sigs = p.signingInfo.hasMultipleSigners() ? p.signingInfo.getApkContentsSigners() : p.signingInfo.getSigningCertificateHistory();
-        } else {
-            sigs = p.signatures;
-        }
-        Set<String> out = new HashSet<>();
-        if (sigs != null) for (Signature s : sigs) out.add(s.toCharsString());
-        return out;
-    }
 }

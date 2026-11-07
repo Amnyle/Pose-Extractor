@@ -92,7 +92,10 @@ export const saveFrames = (video, items) => call('saveFrames', { uri: video.uri,
 const RELEASE_API = 'https://api.github.com/repos/Amnyle/Pose-Extractor/releases/tags/android-latest';
 export const RELEASE_PAGE = 'https://github.com/Amnyle/Pose-Extractor/releases/tag/android-latest';
 
-/** {version, url} of a newer APK than this app, or null. Never throws. */
+/**
+ * {version} of a newer APK than this app, or null. Never throws. The app never downloads or installs
+ * anything itself (that needs a permission Play Protect rightly distrusts): it opens the release page.
+ */
 export async function checkForUpdate() {
   try {
     const [{ versionCode }, release] = await Promise.all([
@@ -102,19 +105,9 @@ export async function checkForUpdate() {
     const latest = Number(/\b1\.0\.(\d+)\b/.exec(release?.name ?? '')?.[1]);
     const apk = release?.assets?.find((a) => a.name.endsWith('.apk'));
     if (!apk || !latest || latest <= Number(versionCode)) return null;
-    return { version: `1.0.${latest}`, url: apk.browser_download_url };
+    return { version: `1.0.${latest}` };
   } catch {
     return null;
-  }
-}
-
-/** Download and open the installer. onProgress(fraction). Rejects with err.code SIGNATURE / PERMISSION. */
-export async function installUpdate(url, onProgress = () => {}) {
-  const sub = listen('updateProgress', (p) => onProgress(p.fraction));
-  try {
-    await call('installUpdate', { url });
-  } finally {
-    sub.remove();
   }
 }
 

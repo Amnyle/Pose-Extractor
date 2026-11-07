@@ -12,7 +12,9 @@ goes on with the app closed:
 - `PosesPlugin.java`: what the web app calls (`app/js/native.js`): pick a video, read frames,
   start / follow the analysis, save photos to the gallery (`Pictures/Poses`), and in-app updates.
 
-When the app opens it checks the android-latest release on GitHub and offers newer versions.
+When the app opens it checks the android-latest release on GitHub and, if there is a newer version,
+offers to open the release page. It does not download or install APKs itself: that would need the
+"install other apps" permission, which makes Play Protect flag the app as possibly harmful.
 
 ## Install on your phone
 
