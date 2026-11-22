@@ -193,8 +193,14 @@ final class VideoFrameReader implements Closeable {
                 }
                 sx += cropX; sy += cropY;
                 int Y = yBuf.get(sy * yRow + sx * yPix) & 255;
-                int U = (uBuf.get((sy / 2) * uRow + (sx / 2) * uPix) & 255) - 128;
-                int V = (vBuf.get((sy / 2) * vRow + (sx / 2) * vPix) & 255) - 128;
+                // colour is stored at half resolution: interpolate it (bilinear) instead of repeating
+                // each value over 2x2 pixels, which gives blocky colour edges
+                double cx = Math.max(0, (sx - cropX - 0.5) / 2.0) + cropX / 2.0, cy = Math.max(0, (sy - cropY - 0.5) / 2.0) + cropY / 2.0;
+                int x0 = (int) cx, y0 = (int) cy;
+                int x1 = Math.min(x0 + 1, (cropX + srcW - 1) / 2), y1 = Math.min(y0 + 1, (cropY + srcH - 1) / 2);
+                double fx = cx - x0, fy = cy - y0;
+                double U = bilinear(uBuf, uRow, uPix, x0, y0, x1, y1, fx, fy) - 128;
+                double V = bilinear(vBuf, vRow, vPix, x0, y0, x1, y1, fx, fy) - 128;
                 double yy = yScale * Math.max(0, Y - yOffset);
                 int r = clamp(yy + rv * V), g = clamp(yy - gu * U - gv * V), b = clamp(yy + bu * U);
                 argb[oy * w + ox] = 0xff000000 | (r << 16) | (g << 8) | b;
@@ -205,6 +211,12 @@ final class VideoFrameReader implements Closeable {
         c.width = w;
         c.height = h;
         return c;
+    }
+
+    private static double bilinear(ByteBuffer b, int row, int pix, int x0, int y0, int x1, int y1, double fx, double fy) {
+        double a = b.get(y0 * row + x0 * pix) & 255, c = b.get(y0 * row + x1 * pix) & 255;
+        double d = b.get(y1 * row + x0 * pix) & 255, e = b.get(y1 * row + x1 * pix) & 255;
+        return (a * (1 - fx) + c * fx) * (1 - fy) + (d * (1 - fx) + e * fx) * fy;
     }
 
     private static int clamp(double v) { return v < 0 ? 0 : v > 255 ? 255 : (int) v; }

@@ -139,28 +139,57 @@ public class PosesPlugin extends Plugin {
 
     /**
      * The frame at `time` seconds (upright), as JPEG, scaled to `maxSide` (0 = full size).
-     * Our own decoder first: it is the one the analysis used, so the frame is always there (Android's
-     * MediaMetadataRetriever sometimes finds no frame at an exact time, and can be very slow when it
-     * does not). The retriever is the fallback.
+     *
+     * Full-size photos (the ones saved) come from Android's MediaMetadataRetriever first: it converts
+     * colours properly, HDR video included. It sometimes finds no frame at an exact time, or takes
+     * very long, so it gets `RETRIEVER_TIMEOUT_MS`, and then our own decoder (the one the analysis
+     * used: the frame is always there) takes over. Small pictures use our decoder first: fast.
      */
     private byte[] frameJpeg(MediaMetadataRetriever r, Uri uri, double time, int maxSide, int quality) throws Exception {
         long us = Math.round(time * 1e6);
         Bitmap frame = null;
-        try {
-            frame = VideoFrameReader.frameAt(getContext(), uri, us, maxSide);
-        } catch (Exception e) {
-            android.util.Log.w("Poses", "decoder could not read the frame, trying the retriever", e);
-        }
+        if (maxSide <= 0) frame = retrieverFrame(uri, us, maxSide);
         if (frame == null) {
             try {
-                frame = r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST);
-            } catch (RuntimeException ignored) {
-                frame = null;
+                frame = VideoFrameReader.frameAt(getContext(), uri, us, maxSide);
+            } catch (Exception e) {
+                android.util.Log.w("Poses", "decoder could not read the frame", e);
             }
         }
+        if (frame == null && maxSide > 0) frame = retrieverFrame(uri, us, maxSide);
         if (frame == null) frame = r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
         if (frame == null) throw new IOException("no frame at " + time + " s");
         return toJpeg(frame, maxSide, quality);
+    }
+
+    private static final long RETRIEVER_TIMEOUT_MS = 8000;
+
+    /** The exact frame from MediaMetadataRetriever (and 1 ms either side), or null if none in time. */
+    private Bitmap retrieverFrame(Uri uri, long us, int maxSide) {
+        java.util.concurrent.ExecutorService one = java.util.concurrent.Executors.newSingleThreadExecutor();
+        java.util.concurrent.Future<Bitmap> job = one.submit(() -> {
+            MediaMetadataRetriever m = new MediaMetadataRetriever();
+            try {
+                m.setDataSource(getContext(), uri);
+                for (long d : new long[] {0, 1000, -1000}) {
+                    Bitmap b = maxSide > 0 && Build.VERSION.SDK_INT >= 27
+                        ? m.getScaledFrameAtTime(us + d, MediaMetadataRetriever.OPTION_CLOSEST, maxSide, maxSide)
+                        : m.getFrameAtTime(us + d, MediaMetadataRetriever.OPTION_CLOSEST);
+                    if (b != null) return b;
+                }
+                return null;
+            } finally {
+                try { m.release(); } catch (Exception ignored) { }
+            }
+        });
+        try {
+            return job.get(RETRIEVER_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            job.cancel(true);
+            return null;
+        } finally {
+            one.shutdown();
+        }
     }
 
     private static byte[] toJpeg(Bitmap frame, int maxSide, int quality) {
@@ -359,7 +388,7 @@ public class PosesPlugin extends Plugin {
                 for (int k = 0; k < items.length(); k++) {
                     JSONObject item = items.getJSONObject(k);
                     try {
-                        byte[] jpeg = frameJpeg(r, Uri.parse(uri), item.getDouble("time"), 0, 95);
+                        byte[] jpeg = frameJpeg(r, Uri.parse(uri), item.getDouble("time"), 0, 100);
                         String name = item.getString("fileName");
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) saveMediaStore(jpeg, name);
                         else saveLegacy(jpeg, name);

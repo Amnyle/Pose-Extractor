@@ -626,8 +626,19 @@ $('results').addEventListener('click', (e) => {
   }
   const photo = e.target.closest('[data-view-photo]');
   if (photo) {
-    $('viewer-img').src = photo.querySelector('img').src;
+    // the card shows a small preview: show it at once, then the full-resolution frame
+    const r = state.results[Number(photo.dataset.viewPhoto)];
+    const c = r.choices[r.picked];
+    const img = $('viewer-img');
+    img.src = photo.querySelector('img').src;
     $('viewer').showModal();
+    const want = c.time;
+    state.video.grab(c.time, 2400, 0.95).then((blob) => {
+      if (!$('viewer').open || r.choices[r.picked]?.time !== want) return;
+      const url = URL.createObjectURL(blob);
+      img.onload = () => URL.revokeObjectURL(url);
+      img.src = url;
+    }).catch(() => { /* keep the preview */ });
   }
 });
 $('save-all').addEventListener('click', saveAll);

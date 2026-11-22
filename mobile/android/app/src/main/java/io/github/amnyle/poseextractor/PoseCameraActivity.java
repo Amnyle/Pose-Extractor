@@ -221,18 +221,40 @@ public class PoseCameraActivity extends AppCompatActivity {
             .build();
         a.setAnalyzer(analysis, this::analyse);
 
-        // full sensor resolution, the phone's best still-photo processing unless "fast" was chosen
-        capture = new ImageCapture.Builder()
+        CameraSelector selector = front ? CameraSelector.DEFAULT_FRONT_CAMERA : CameraSelector.DEFAULT_BACK_CAMERA;
+        // Ultra HDR (Android 14+, when the camera offers it): the HDR photos the Pixel camera makes,
+        // shown with their full brightness range in Google Photos. If the camera cannot combine it
+        // with the live preview and pose stream, plain JPEG.
+        boolean ultraHdr = false;
+        try {
+            ultraHdr = Build.VERSION.SDK_INT >= 34 && ImageCapture.getImageCaptureCapabilities(provider.getCameraInfo(selector))
+                .getSupportedOutputFormats().contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR);
+        } catch (Exception e) {
+            Log.w(TAG, "capabilities unknown", e);
+        }
+        try {
+            capture = buildCapture(ultraHdr);
+            provider.bindToLifecycle(this, selector, p, a, capture);
+        } catch (RuntimeException e) {
+            if (!ultraHdr) throw e;
+            Log.w(TAG, "Ultra HDR not possible with the live pose stream, plain JPEG", e);
+            provider.unbindAll();
+            capture = buildCapture(false);
+            provider.bindToLifecycle(this, selector, p, a, capture);
+        }
+    }
+
+    /** Full sensor resolution, the phone's best still-photo processing unless "fast" was chosen, JPEG 100. */
+    private ImageCapture buildCapture(boolean ultraHdr) {
+        ImageCapture.Builder b = new ImageCapture.Builder()
             .setCaptureMode(fast ? ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY : ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setResolutionSelector(new ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                 .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
                 .build())
-            .setJpegQuality(95)
-            .build();
-
-        CameraSelector selector = front ? CameraSelector.DEFAULT_FRONT_CAMERA : CameraSelector.DEFAULT_BACK_CAMERA;
-        provider.bindToLifecycle(this, selector, p, a, capture);
+            .setJpegQuality(100);
+        if (ultraHdr && Build.VERSION.SDK_INT >= 34) b.setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR);
+        return b.build();
     }
 
     private void flip() {
