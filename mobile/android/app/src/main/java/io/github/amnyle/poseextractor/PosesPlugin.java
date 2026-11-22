@@ -53,6 +53,7 @@ import org.json.JSONObject;
     permissions = {
         @Permission(strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }, alias = "storage"),
         @Permission(strings = { Manifest.permission.POST_NOTIFICATIONS }, alias = "notifications"),
+        @Permission(strings = { Manifest.permission.CAMERA }, alias = "camera"),
     }
 )
 public class PosesPlugin extends Plugin {
@@ -409,6 +410,91 @@ public class PosesPlugin extends Plugin {
         File file = new File(dir, fileName);
         try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
         MediaScannerConnection.scanFile(getContext(), new String[] { file.getAbsolutePath() }, new String[] { "image/jpeg" }, null);
+    }
+
+    // ---- live camera ---------------------------------------------------------------------------
+
+    /**
+     * startCamera({poses, burst, front, countdown, voice, fast}): the live pose taker
+     * (PoseCameraActivity). Resolves with {photos: [{uri, pose, name, time}]} when the athlete taps Done.
+     */
+    @PluginMethod
+    public void startCamera(PluginCall call) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraAnswered");
+            return;
+        }
+        openCamera(call);
+    }
+
+    @PermissionCallback
+    private void cameraAnswered(PluginCall call) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) openCamera(call);
+        else call.reject("The camera is needed to take the photos", "PERMISSION");
+    }
+
+    private void openCamera(PluginCall call) {
+        JSArray list = call.getArray("poses", new JSArray());
+        String[] poses = new String[list.length()];
+        for (int i = 0; i < poses.length; i++) poses[i] = list.optString(i);
+        Intent i = new Intent(getContext(), PoseCameraActivity.class)
+            .putExtra(PoseCameraActivity.EXTRA_POSES, poses)
+            .putExtra(PoseCameraActivity.EXTRA_BURST, call.getInt("burst", 3))
+            .putExtra(PoseCameraActivity.EXTRA_FRONT, call.getBoolean("front", false))
+            .putExtra(PoseCameraActivity.EXTRA_COUNTDOWN, call.getInt("countdown", 5))
+            .putExtra(PoseCameraActivity.EXTRA_VOICE, call.getBoolean("voice", true))
+            .putExtra(PoseCameraActivity.EXTRA_FAST, call.getBoolean("fast", false));
+        startActivityForResult(call, i, "cameraDone");
+    }
+
+    @ActivityCallback
+    private void cameraDone(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        String json = result.getData() == null ? null : result.getData().getStringExtra(PoseCameraActivity.EXTRA_RESULT);
+        try {
+            JSObject o = new JSObject();
+            o.put("photos", new JSArray(json == null ? "[]" : json));
+            call.resolve(o);
+        } catch (Exception e) {
+            call.reject("Could not read the photos taken: " + e.getMessage());
+        }
+    }
+
+    /** thumbnail({uri, maxSide}): a small JPEG of a photo in the gallery, as base64. */
+    @PluginMethod
+    public void thumbnail(PluginCall call) {
+        Uri uri = Uri.parse(call.getString("uri"));
+        int maxSide = call.getInt("maxSide", 480);
+        getBridge().execute(() -> {
+            try {
+                Bitmap b;
+                if (Build.VERSION.SDK_INT >= 29) {
+                    b = getContext().getContentResolver().loadThumbnail(uri, new android.util.Size(maxSide, maxSide), null);
+                } else {
+                    android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                    o.inSampleSize = 8;
+                    try (InputStream in = getContext().getContentResolver().openInputStream(uri)) {
+                        b = android.graphics.BitmapFactory.decodeStream(in, null, o);
+                    }
+                }
+                if (b == null) throw new IOException("unreadable");
+                JSObject out = new JSObject();
+                out.put("data", Base64.encodeToString(toJpeg(b, maxSide, 85), Base64.NO_WRAP));
+                call.resolve(out);
+            } catch (Exception e) {
+                call.reject("No thumbnail: " + e.getMessage());
+            }
+        });
+    }
+
+    /** openPhoto({uri}): show a photo in the gallery app (Google Photos). */
+    @PluginMethod
+    public void openPhoto(PluginCall call) {
+        Intent i = new Intent(Intent.ACTION_VIEW)
+            .setDataAndType(Uri.parse(call.getString("uri")), "image/jpeg")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(i);
+        call.resolve();
     }
 
     // ---- updates -------------------------------------------------------------------------------

@@ -108,6 +108,22 @@ body[data-view="results"] #view-results { display: block; }
   font-size: 13px; font-weight: 700;
 }
 
+/* modes (Android app): live camera or from a video */
+.segmented.mode { grid-template-columns: 1fr 1fr; margin: 4px 0 8px; }
+.segmented.mode[hidden] { display: none; }
+.mode-hint { color: var(--muted); font-size: 14px; margin: 0 4px 12px; }
+body:not([data-mode="camera"]) .only-camera,
+body[data-mode="camera"] .only-video { display: none; }
+.setting { margin-bottom: 14px; }
+.setting-label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+#burst, #countdown { grid-template-columns: repeat(3, 1fr); }
+#facing, #quality { grid-template-columns: 1fr 1fr; }
+
+/* photos taken with the live camera */
+.shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.shot { border: 0; padding: 0; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 3 / 4; cursor: pointer; }
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 /* update banner (Android app) */
 .update {
   max-width: 608px; margin: 4px auto 8px; padding: 12px 14px;

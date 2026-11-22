@@ -31,7 +31,8 @@ Everything runs on the phone (MediaPipe in the browser); the video is never uplo
 first use it also works offline.
 
 **Android app**: the same app as a real Android app (APK), with photos saved straight to the
-gallery. Install it from https://github.com/Amnyle/Pose-Extractor/releases/tag/android-latest, see
+gallery, plus a **live camera** mode: put the phone on a stand and pose; when a pose is held, it
+takes several full-quality photos into Google Photos (Pictures/Poses). No video needed. Install it from https://github.com/Amnyle/Pose-Extractor/releases/tag/android-latest, see
 [mobile/README.md](mobile/README.md).
 
 **Install it from the browser**: it is published on GitHub Pages by `.github/workflows/pages.yml` on every push to

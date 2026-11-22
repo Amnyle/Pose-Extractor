@@ -123,3 +123,23 @@ export async function checkForUpdate() {
 export const appVersion = () => call('appInfo').then((i) => i.versionName).catch(() => null);
 
 export const openUrl = (url) => call('openUrl', { url });
+
+// ---- live camera ("pose taker") ----------------------------------------------------------------
+
+/**
+ * Open the live camera (PoseCameraActivity). Resolves, when the athlete taps Done, to the photos
+ * taken: [{uri, pose, name, time}], already in the gallery (Pictures/Poses).
+ */
+export async function startCamera({ poses, burst = 3, front = false, countdown = 5, voice = true, fast = false }) {
+  const { photos } = await call('startCamera', { poses, burst, front, countdown, voice, fast });
+  return photos ?? [];
+}
+
+/** A small JPEG of a gallery photo, as a blob URL. */
+export async function photoThumbnail(uri, maxSide = 480) {
+  const { data } = await call('thumbnail', { uri, maxSide });
+  return URL.createObjectURL(base64ToBlob(data));
+}
+
+/** Show a photo in the gallery app (Google Photos). */
+export const openPhoto = (uri) => call('openPhoto', { uri });

@@ -23,7 +23,7 @@
       <img src="icons/icon.svg" alt="" width="32" height="32">
       <div>
         <h1>Pose Extractor</h1>
-        <p class="tagline">Best photo of each pose, from your posing video</p>
+        <p class="tagline">The best photos of your bodybuilding poses</p>
       </div>
     </div>
   </header>
@@ -38,7 +38,13 @@
 
   <!-- 1. Setup ------------------------------------------------------------------------------- -->
   <main class="view" id="view-setup">
-    <section class="card">
+    <div class="segmented mode" id="mode" role="radiogroup" aria-label="How to get the photos" hidden>
+      <button type="button" role="radio" data-mode="camera">Live camera</button>
+      <button type="button" role="radio" data-mode="video">From a video</button>
+    </div>
+    <p class="mode-hint only-camera">Put the phone on a stand. Hold each pose: when it sees it, it takes several full-quality photos and says the pose name.</p>
+
+    <section class="card only-video">
       <h2><span class="step">1</span>Video</h2>
       <label class="dropzone" id="dropzone">
         <input type="file" id="file" accept="video/*" hidden>
@@ -61,13 +67,55 @@
 
     <section class="card">
       <div class="card-head">
-        <h2><span class="step">2</span>Which poses are in it?</h2>
+        <h2><span class="step" id="poses-step">2</span><span id="poses-title">Which poses are in it?</span></h2>
         <button class="text-btn" id="toggle-all" type="button">Select all</button>
       </div>
       <div class="pose-grid" id="pose-grid" role="group" aria-label="Poses in the video"></div>
     </section>
 
-    <section class="card">
+    <section class="card only-camera">
+      <h2><span class="step">2</span>Camera</h2>
+      <div class="setting">
+        <span class="setting-label">Photos per pose</span>
+        <div class="segmented" id="burst" role="radiogroup" aria-label="Photos per pose">
+          <button type="button" role="radio" data-value="2">2</button>
+          <button type="button" role="radio" data-value="3">3</button>
+          <button type="button" role="radio" data-value="5">5</button>
+        </div>
+      </div>
+      <div class="setting">
+        <span class="setting-label">Camera</span>
+        <div class="segmented" id="facing" role="radiogroup" aria-label="Camera">
+          <button type="button" role="radio" data-value="back">Back (best)</button>
+          <button type="button" role="radio" data-value="front">Front (see yourself)</button>
+        </div>
+      </div>
+      <div class="setting">
+        <span class="setting-label">Countdown before starting</span>
+        <div class="segmented" id="countdown" role="radiogroup" aria-label="Countdown">
+          <button type="button" role="radio" data-value="0">Off</button>
+          <button type="button" role="radio" data-value="5">5 s</button>
+          <button type="button" role="radio" data-value="10">10 s</button>
+        </div>
+      </div>
+      <div class="setting">
+        <span class="setting-label">Photo</span>
+        <div class="segmented" id="quality" role="radiogroup" aria-label="Photo quality">
+          <button type="button" role="radio" data-value="best">Best quality</button>
+          <button type="button" role="radio" data-value="fast">Fastest</button>
+        </div>
+        <p class="hint">Best quality uses the phone's full photo processing; Fastest takes the burst quicker.</p>
+      </div>
+      <label class="switch-row">
+        <span>
+          <strong>Say the pose name</strong>
+          <span class="hint">So you know it was taken without looking at the phone.</span>
+        </span>
+        <input type="checkbox" id="voice" role="switch">
+      </label>
+    </section>
+
+    <section class="card only-video">
       <h2><span class="step">3</span>Detail</h2>
       <div class="segmented" id="speed" role="radiogroup" aria-label="Analysis detail">
         <button type="button" role="radio" data-fps="4">Fast</button>
@@ -86,7 +134,7 @@
 
     <p class="privacy">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/></svg>
-      Everything runs on this device. Your video is never uploaded.
+      Everything runs on this device. Nothing is uploaded.
     </p>
 
     <p class="about" id="about" hidden>

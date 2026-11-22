@@ -4,7 +4,7 @@ import { CLASSIC_POSES, OTHER } from './classic.js';
 import { PoseEstimator } from './estimator.js';
 import {
   RELEASE_PAGE, appVersion, checkForUpdate, followAnalysis, getAnalysis, isNative, markAnalysisSeen,
-  nativeVideo, openUrl, pickVideo, resultToChoices, runAnalysis, saveFrames,
+  nativeVideo, openPhoto, openUrl, photoThumbnail, pickVideo, resultToChoices, runAnalysis, saveFrames, startCamera,
 } from './native.js';
 import { DEFAULT_CONFIG } from './pipeline.js';
 import { PICTOGRAMS } from './pictograms.js';
@@ -42,6 +42,9 @@ const state = {
   selected: new Set(store.get('poses', CLASSIC_POSES).filter((p) => CLASSIC_POSES.includes(p))),
   fps: store.get('fps', 6),
   stopWhenFound: store.get('stopWhenFound', true),
+  // live camera (Android app): the default there, since photos beat video frames
+  mode: native ? store.get('mode', 'camera') : 'video',
+  camera: { burst: 3, facing: 'back', countdown: 5, quality: 'best', voice: true, ...store.get('camera', {}) },
   abort: null,
   estimator: null,
   results: null,   // [{pose, status, unsure, choices: [{time, thumb}], picked: index or -1}]
@@ -73,10 +76,82 @@ function renderSpeed() {
 }
 
 function updateStart() {
-  $('start').disabled = !state.video || state.selected.size === 0;
-  $('start').textContent = state.selected.size
-    ? `Find ${state.selected.size === 1 ? 'this pose' : `these ${state.selected.size} poses`}`
-    : 'Choose at least one pose';
+  const camera = state.mode === 'camera';
+  $('start').disabled = (!camera && !state.video) || state.selected.size === 0;
+  $('start').textContent = !state.selected.size ? 'Choose at least one pose'
+    : camera ? 'Start the camera'
+      : `Find ${state.selected.size === 1 ? 'this pose' : `these ${state.selected.size} poses`}`;
+}
+
+function renderMode() {
+  document.body.dataset.mode = state.mode;
+  for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.mode === state.mode));
+  $('poses-step').textContent = state.mode === 'camera' ? '1' : '2';
+  $('poses-title').textContent = state.mode === 'camera' ? 'Which poses to take?' : 'Which poses are in it?';
+  updateStart();
+}
+
+function renderCameraSettings() {
+  const c = state.camera;
+  const pick = (id, value) => {
+    for (const b of $(id).querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.value === String(value)));
+  };
+  pick('burst', c.burst);
+  pick('facing', c.facing);
+  pick('countdown', c.countdown);
+  pick('quality', c.quality);
+  $('voice').checked = c.voice;
+}
+
+// ---- live camera ------------------------------------------------------------------------------
+
+async function startCameraSession() {
+  const poses = CLASSIC_POSES.filter((p) => state.selected.has(p));
+  const c = state.camera;
+  $('video-error').hidden = true;
+  let photos;
+  try {
+    photos = await startCamera({
+      poses, burst: c.burst, front: c.facing === 'front', countdown: c.countdown, voice: c.voice, fast: c.quality === 'fast',
+    });
+  } catch (err) {
+    toast(err.message || 'The camera could not be opened');
+    return;
+  }
+  await showCameraResults(poses, photos);
+}
+
+async function showCameraResults(poses, photos) {
+  for (const url of state.thumbs) URL.revokeObjectURL(url);
+  state.thumbs = [];
+  const byPose = new Map(poses.map((p) => [p, []]));
+  for (const ph of photos) if (ph.uri && byPose.has(ph.pose)) byPose.get(ph.pose).push(ph);
+  const taken = [...byPose.values()].filter((l) => l.length).length;
+  $('summary').textContent = photos.length
+    ? `${photos.length} photo${photos.length > 1 ? 's' : ''} of ${taken} pose${taken === 1 ? '' : 's'}, saved in Pictures/Poses (Google Photos: Library › Poses)`
+    : 'No photos were taken';
+  const order = [...byPose.entries()].sort((a, b) => (a[1][0]?.time ?? Infinity) - (b[1][0]?.time ?? Infinity));
+  $('results').innerHTML = order.map(([pose, list]) => `
+    <section class="card pose-card">
+      <div class="card-head"><h2>${fullName(pose)}</h2>${list.length
+        ? `<span class="badge found">${list.length} photo${list.length > 1 ? 's' : ''}</span>`
+        : '<span class="badge missing">Not taken</span>'}</div>
+      ${list.length
+        ? `<div class="shots">${list.map((ph) => `<button type="button" class="shot" data-photo="${ph.uri}" aria-label="Open in Google Photos"><img alt="" data-thumb="${ph.uri}"></button>`).join('')}</div>`
+        : '<p class="note">Hold the pose still for about a second, facing the camera as in the picture on the start screen.</p>'}
+    </section>`).join('');
+  $('save-all').hidden = true;
+  $('again').textContent = 'Done';
+  document.body.dataset.view = 'results';
+  history.pushState({ view: 'results' }, '');
+  window.scrollTo(0, 0);
+  for (const img of $('results').querySelectorAll('img[data-thumb]')) {
+    try {
+      const url = await photoThumbnail(img.dataset.thumb);
+      state.thumbs.push(url);
+      img.src = url;
+    } catch { /* deleted meanwhile: leave it empty */ }
+  }
 }
 
 /** A video in the browser, with the same shape as nativeVideo() in native.js. */
@@ -349,6 +424,8 @@ function showSetup() {
 }
 
 function renderResults() {
+  $('save-all').hidden = false;
+  $('again').textContent = 'New video';
   const ar = `${state.video.width} / ${state.video.height}`;
   const found = state.results.filter((r) => r.status === 'found').length;
   const toCheck = state.results.filter((r) => r.status !== 'missing' && r.unsure).length;
@@ -512,13 +589,39 @@ $('stop-when-found').addEventListener('change', (e) => {
   state.stopWhenFound = e.target.checked;
   store.set('stopWhenFound', state.stopWhenFound);
 });
-$('start').addEventListener('click', start);
+$('start').addEventListener('click', () => (state.mode === 'camera' ? startCameraSession() : start()));
+$('mode').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mode]');
+  if (!b) return;
+  state.mode = b.dataset.mode;
+  store.set('mode', state.mode);
+  renderMode();
+});
+for (const id of ['burst', 'facing', 'countdown', 'quality']) {
+  $(id).addEventListener('click', (e) => {
+    const b = e.target.closest('[data-value]');
+    if (!b) return;
+    const key = id === 'facing' ? 'facing' : id;
+    state.camera[key] = ['burst', 'countdown'].includes(id) ? Number(b.dataset.value) : b.dataset.value;
+    store.set('camera', state.camera);
+    renderCameraSettings();
+  });
+}
+$('voice').addEventListener('change', (e) => {
+  state.camera.voice = e.target.checked;
+  store.set('camera', state.camera);
+});
 $('cancel').addEventListener('click', () => state.abort?.abort());
 $('results').addEventListener('click', (e) => {
   const choice = e.target.closest('[data-choice]');
   if (choice) {
     state.results[Number(choice.dataset.card)].picked = Number(choice.dataset.choice);
     renderResults();
+    return;
+  }
+  const shot = e.target.closest('[data-photo]');
+  if (shot) {
+    openPhoto(shot.dataset.photo).catch(() => toast('Could not open the photo'));
     return;
   }
   const photo = e.target.closest('[data-view-photo]');
@@ -537,7 +640,10 @@ window.addEventListener('popstate', () => {
 
 renderPoseGrid();
 renderSpeed();
+renderCameraSettings();
+renderMode();
 if (native) {
+  $('mode').hidden = false;
   $('about').hidden = false;
   appVersion().then((v) => { if (v) $('app-version').textContent = `Version ${v}`; });
   $('check-updates').addEventListener('click', () => offerUpdate(true));

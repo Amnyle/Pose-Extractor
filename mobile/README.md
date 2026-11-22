@@ -12,6 +12,14 @@ goes on with the app closed:
 - `PosesPlugin.java`: what the web app calls (`app/js/native.js`): pick a video, read frames,
   start / follow the analysis, save photos to the gallery (`Pictures/Poses`), and in-app updates.
 
+**Live camera ("pose taker")**: `PoseCameraActivity.java` shows the camera, runs the pose model on a
+small analysis stream, and when a chosen pose has been held still for about 0.7 s
+(`logic/LiveHoldDetector.java`, tested on the reference routines in `LiveHoldDetectorTest`) takes a
+burst of full-resolution photos with CameraX (`ImageCapture`, the phone's still-photo processing),
+straight into `Pictures/Poses`, says the pose name and plays the shutter sound. A pose is taken
+again only after it was let go. Photos are much cleaner than video frames: full sensor resolution,
+still-photo noise reduction, no video compression.
+
 When the app opens it checks the android-latest release on GitHub and, if there is a newer version,
 offers to open the release page. It does not download or install APKs itself: that would need the
 "install other apps" permission, which makes Play Protect flag the app as possibly harmful.
